@@ -1,5 +1,5 @@
 use baseview::{Size, WindowOpenOptions, WindowScalePolicy};
-use egui::Context;
+use egui::{CentralPanel, Context, Ui};
 use egui_baseview::{EguiWindow, GraphicsConfig, Queue};
 
 fn main() {
@@ -7,8 +7,7 @@ fn main() {
         title: String::from("egui-baseview simple demo"),
         size: Size::new(400.0, 200.0),
         scale: WindowScalePolicy::SystemScaleFactor,
-        #[cfg(feature = "opengl")]
-        gl_config: Some(Default::default()),
+        ..Default::default()
     };
 
     let state = State::new();
@@ -22,8 +21,8 @@ fn main() {
         |_egui_ctx: &Context, _queue: &mut Queue, _state: &mut State| {},
         // Called before each frame. Here you should update the state of your
         // application and build the UI.
-        |egui_ctx: &Context, queue: &mut Queue, state: &mut State| {
-            egui::Window::new("egui-baseview simple demo").show(egui_ctx, |ui| {
+        |ui: &mut Ui, queue: &mut Queue, state: &mut State| {
+            CentralPanel::default().show_inside(ui, |ui| {
                 ui.heading("My Egui Application");
                 ui.horizontal(|ui| {
                     ui.label("Your name: ");

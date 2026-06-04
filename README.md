@@ -1,52 +1,16 @@
 # egui-baseview
-![Test](https://github.com/BillyDM/egui-baseview/workflows/Rust/badge.svg)
-[![License](https://img.shields.io/crates/l/egui-baseview.svg)](https://github.com/BillyDM/egui-baseview/blob/main/LICENSE)
 
-> This project has moved to a new hard fork of NIH-plug for easier maintanence: https://codeberg.org/BillyDM/nih-plug
+[![Documentation](https://docs.rs/egui-baseview/badge.svg)](https://docs.rs/egui-baseview)
+[![Crates.io](https://img.shields.io/crates/v/egui-baseview.svg)](https://crates.io/crates/egui-baseview)
+[![License](https://img.shields.io/crates/l/egui-baseview.svg)](https://codeberg.org/RustAudio/iced_baseview/src/branch/main/LICENSE-APACHE)
 
-A [`baseview`](https://github.com/RustAudio/baseview) backend for [`egui`](https://github.com/emilk/egui). This also contains an adapter for [`NIH-plug`](https://github.com/robbert-vdh/nih-plug).
+A [baseview](https://github.com/RustAudio/baseview) backend for [egui](https://github.com/emilk/egui)
+
+This is used by the [nice-plug](https://codeberg.org/RustAudio/nice-plug) framework, but it can also be used in your own custom audio plugin framework (i.e. with [clack-plugin](https://crates.io/crates/clack-plugin)).
 
 <div align="center">
     <img src="screenshot.png">
 </div>
-
-
-## How to use with custom plugin framework
-
-Add the following to your `Cargo.toml`:
-
-```toml
-egui-baseview = { git = "https://codeberg.org/BillyDM/egui-baseview", branch = "main }
-```
-
-or if you want to use a specific version of egui:
-
-```toml
-egui-baseview = { git = "https://codeberg.org/BillyDM/egui-baseview", branch = "egui_32 }
-```
-
-*(Example plugin code is still a WIP)*
-
-## How to use with NIH-plug
-
-Add the following to your `Cargo.toml` (in place of `nih_plug_vizia`):
-
-```toml
-nih_plug_egui = { git = "https://codeberg.org/BillyDM/egui-baseview", branch = "main }
-```
-
-or if you want to use a specific version of egui:
-
-```toml
-nih_plug_egui = { git = "https://codeberg.org/BillyDM/egui-baseview", branch = "egui_32 }
-```
-
-See the `nih_plug_gain_egui` example for how to hook up `egui` to your plugin.
-
-To build the `nih_plug_gain_egui` example, run:
-```
-cargo xtask bundle nih_plug_gain_egui --release
-```
 
 ## Prerequisites
 

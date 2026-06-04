@@ -5,16 +5,16 @@ use baseview::{
     WindowScalePolicy,
 };
 use copypasta::ClipboardProvider;
-use egui::{pos2, vec2, Pos2, Rect, Rgba, ViewportCommand};
+use egui::{Pos2, Rect, Rgba, ViewportCommand, pos2, vec2};
 use keyboard_types::Modifiers;
 use raw_window_handle::HasRawWindowHandle;
 
-use crate::{renderer::Renderer, GraphicsConfig};
+use crate::{GraphicsConfig, renderer::Renderer};
 
-#[cfg(feature = "nih_log")]
-use nih_plug::log::{error, warn};
+#[cfg(feature = "nice-log")]
+use nice_plug_core::{nice_error as error, nice_warn as warn};
 
-#[cfg(all(feature = "tracing", not(feature = "nih_log")))]
+#[cfg(all(feature = "tracing", not(feature = "nice-log")))]
 use tracing::{error, warn};
 
 pub struct Queue<'a> {
@@ -104,7 +104,7 @@ pub enum KeyCapture {
 pub struct EguiWindow<State, U>
 where
     State: 'static + Send,
-    U: FnMut(&egui::Context, &mut Queue, &mut State),
+    U: FnMut(&mut egui::Ui, &mut Queue, &mut State),
     U: 'static + Send,
 {
     user_state: Option<State>,
@@ -134,7 +134,7 @@ where
 impl<State, U> EguiWindow<State, U>
 where
     State: 'static + Send,
-    U: FnMut(&egui::Context, &mut Queue, &mut State),
+    U: FnMut(&mut egui::Ui, &mut Queue, &mut State),
     U: 'static + Send,
 {
     fn new<B>(
@@ -195,6 +195,7 @@ where
 
         let mut bg_color = Rgba::BLACK;
         let mut close_requested = false;
+        let old_physical_size = physical_size;
         let mut key_capture = KeyCapture::default();
         let mut queue = Queue::new(
             &mut bg_color,
@@ -203,6 +204,13 @@ where
             &mut key_capture,
         );
         (build)(&egui_ctx, &mut queue, &mut state);
+
+        if physical_size != old_physical_size {
+            window.resize(baseview::Size {
+                width: physical_size.width as f64,
+                height: physical_size.height as f64,
+            });
+        }
 
         let clipboard_ctx = match copypasta::ClipboardContext::new() {
             Ok(clipboard_ctx) => Some(clipboard_ctx),
@@ -246,9 +254,9 @@ where
     /// * `settings` - The settings of the window.
     /// * `state` - The initial state of your application.
     /// * `build` - Called once before the first frame. Allows you to do setup code and to
-    /// call `ctx.set_fonts()`. Optional.
+    ///   call `ctx.set_fonts()`. Optional.
     /// * `update` - Called before each frame. Here you should update the state of your
-    /// application and build the UI.
+    ///   application and build the UI.
     pub fn open_parented<P, B>(
         parent: &P,
         #[allow(unused_mut)] mut settings: WindowOpenOptions,
@@ -283,9 +291,9 @@ where
     /// * `settings` - The settings of the window.
     /// * `state` - The initial state of your application.
     /// * `build` - Called once before the first frame. Allows you to do setup code and to
-    /// call `ctx.set_fonts()`. Optional.
+    ///   call `ctx.set_fonts()`. Optional.
     /// * `update` - Called before each frame. Here you should update the state of your
-    /// application and build the UI.
+    ///   application and build the UI.
     pub fn open_blocking<B>(
         #[allow(unused_mut)] mut settings: WindowOpenOptions,
         graphics_config: GraphicsConfig,
@@ -322,7 +330,7 @@ where
 impl<State, U> WindowHandler for EguiWindow<State, U>
 where
     State: 'static + Send,
-    U: FnMut(&egui::Context, &mut Queue, &mut State),
+    U: FnMut(&mut egui::Ui, &mut Queue, &mut State),
     U: 'static + Send,
 {
     fn on_frame(&mut self, window: &mut Window) {
@@ -336,9 +344,8 @@ where
             self.points_per_pixel,
         ));
 
-        self.egui_ctx.begin_pass(self.egui_input.take());
-
         //let mut repaint_requested = false;
+        let old_physical_size = self.physical_size;
         let mut queue = Queue::new(
             &mut self.bg_color,
             &mut self.close_requested,
@@ -346,7 +353,9 @@ where
             &mut self.key_capture,
         );
 
-        (self.user_update)(&self.egui_ctx, &mut queue, state);
+        let mut full_output = self.egui_ctx.run_ui(self.egui_input.take(), |ui| {
+            (self.user_update)(ui, &mut queue, state)
+        });
 
         if self.close_requested {
             window.close();
@@ -354,7 +363,6 @@ where
 
         // Prevent data from being allocated every frame by storing this
         // in a member field.
-        let mut full_output = self.egui_ctx.end_pass();
 
         let Some(viewport_output) = full_output.viewport_output.get(&self.viewport_id) else {
             // The main window was closed by egui.
@@ -375,6 +383,13 @@ where
             }
         }
 
+        if self.physical_size != old_physical_size {
+            window.resize(baseview::Size {
+                width: self.physical_size.width.max(1) as f64,
+                height: self.physical_size.height.max(1) as f64,
+            });
+        }
+
         let now = Instant::now();
         let do_repaint_now = if let Some(t) = self.repaint_after {
             now >= t || viewport_output.repaint_delay.is_zero()
@@ -384,7 +399,6 @@ where
 
         if do_repaint_now {
             self.renderer.render(
-                #[cfg(feature = "opengl")]
                 window,
                 self.bg_color,
                 self.physical_size,
@@ -402,10 +416,10 @@ where
         for command in full_output.platform_output.commands {
             match command {
                 egui::OutputCommand::CopyText(text) => {
-                    if let Some(clipboard_ctx) = &mut self.clipboard_ctx {
-                        if let Err(err) = clipboard_ctx.set_contents(text) {
-                            error!("Copy/Cut error: {}", err);
-                        }
+                    if let Some(clipboard_ctx) = &mut self.clipboard_ctx
+                        && let Err(err) = clipboard_ctx.set_contents(text)
+                    {
+                        error!("Copy/Cut error: {}", err);
                     }
                 }
                 egui::OutputCommand::CopyImage(_) => {
@@ -444,8 +458,20 @@ where
         }
     }
 
-    fn on_event(&mut self, _window: &mut Window, event: Event) -> EventStatus {
+    #[allow(unused_variables)]
+    fn on_event(&mut self, window: &mut Window, event: Event) -> EventStatus {
         let mut return_status = EventStatus::Captured;
+
+        // Parent/embedded windows do not always gain keyboard focus
+        // Automatically on click. Request focus explicitly before forwarding the event.
+        #[cfg(not(target_os = "linux"))]
+        if matches!(
+            event,
+            Event::Mouse(baseview::MouseEvent::ButtonPressed { .. })
+        ) && !window.has_focus()
+        {
+            window.focus();
+        }
 
         match &event {
             baseview::Event::Mouse(event) => match event {
@@ -462,29 +488,29 @@ where
                 baseview::MouseEvent::ButtonPressed { button, modifiers } => {
                     self.update_modifiers(modifiers);
 
-                    if let Some(pos) = self.pointer_pos_in_points {
-                        if let Some(button) = crate::translate::translate_mouse_button(*button) {
-                            self.egui_input.events.push(egui::Event::PointerButton {
-                                pos,
-                                button,
-                                pressed: true,
-                                modifiers: self.egui_input.modifiers,
-                            });
-                        }
+                    if let Some(pos) = self.pointer_pos_in_points
+                        && let Some(button) = crate::translate::translate_mouse_button(*button)
+                    {
+                        self.egui_input.events.push(egui::Event::PointerButton {
+                            pos,
+                            button,
+                            pressed: true,
+                            modifiers: self.egui_input.modifiers,
+                        });
                     }
                 }
                 baseview::MouseEvent::ButtonReleased { button, modifiers } => {
                     self.update_modifiers(modifiers);
 
-                    if let Some(pos) = self.pointer_pos_in_points {
-                        if let Some(button) = crate::translate::translate_mouse_button(*button) {
-                            self.egui_input.events.push(egui::Event::PointerButton {
-                                pos,
-                                button,
-                                pressed: false,
-                                modifiers: self.egui_input.modifiers,
-                            });
-                        }
+                    if let Some(pos) = self.pointer_pos_in_points
+                        && let Some(button) = crate::translate::translate_mouse_button(*button)
+                    {
+                        self.egui_input.events.push(egui::Event::PointerButton {
+                            pos,
+                            button,
+                            pressed: false,
+                            modifiers: self.egui_input.modifiers,
+                        });
                     }
                 }
                 baseview::MouseEvent::WheelScrolled {
@@ -517,6 +543,7 @@ where
                         unit,
                         delta,
                         modifiers: self.egui_input.modifiers,
+                        phase: egui::TouchPhase::Move,
                     });
                 }
                 baseview::MouseEvent::CursorLeft => {
@@ -582,12 +609,13 @@ where
                                 }
                             }
                         }
-                    } else if let keyboard_types::Key::Character(written) = &event.key {
-                        if !self.egui_input.modifiers.ctrl && !self.egui_input.modifiers.command {
-                            self.egui_input
-                                .events
-                                .push(egui::Event::Text(written.clone()));
-                        }
+                    } else if let keyboard_types::Key::Character(written) = &event.key
+                        && !self.egui_input.modifiers.ctrl
+                        && !self.egui_input.modifiers.command
+                    {
+                        self.egui_input
+                            .events
+                            .push(egui::Event::Text(written.clone()));
                     }
                 }
 
@@ -660,14 +688,17 @@ where
         // This allows DAW shortcuts (spacebar, etc.) to pass through when no text field is focused
         match &event {
             baseview::Event::Keyboard(_) => {
-                if return_status == EventStatus::Captured && !self.egui_ctx.wants_keyboard_input() {
+                if return_status == EventStatus::Captured
+                    && !self.egui_ctx.egui_wants_keyboard_input()
+                {
                     EventStatus::Ignored
                 } else {
                     return_status
                 }
             }
             baseview::Event::Mouse(_) => {
-                if self.egui_ctx.is_using_pointer() || self.egui_ctx.wants_pointer_input() {
+                if self.egui_ctx.egui_is_using_pointer() || self.egui_ctx.egui_wants_pointer_input()
+                {
                     EventStatus::Captured
                 } else {
                     EventStatus::Ignored

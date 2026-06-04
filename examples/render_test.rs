@@ -4,7 +4,7 @@ use egui_baseview::{EguiWindow, GraphicsConfig, Queue};
 
 use std::collections::HashMap;
 
-use egui::{widgets::color_picker::show_color, TextureOptions, *};
+use egui::{TextureOptions, widgets::color_picker::show_color, *};
 
 const GRADIENT_SIZE: Vec2 = vec2(256.0, 18.0);
 
@@ -33,10 +33,14 @@ impl Default for ColorTest {
 
 impl ColorTest {
     pub fn ui(&mut self, ui: &mut Ui) {
-        ui.horizontal_wrapped(|ui|{
+        ui.horizontal_wrapped(|ui| {
             ui.label("This is made to test that the egui rendering backend is set up correctly.");
             ui.add(egui::Label::new("❓").sense(egui::Sense::click()))
-                .on_hover_text("The texture sampling should be sRGB-aware, and every other color operation should be done in gamma-space (sRGB). All colors should use pre-multiplied alpha");
+                .on_hover_text(
+                    "The texture sampling should be sRGB-aware, and every other color operation \
+                     should be done in gamma-space (sRGB). All colors should use pre-multiplied \
+                     alpha",
+                );
         });
 
         ui.separator();
@@ -584,7 +588,7 @@ fn paint_fine_lines_and_text(painter: &egui::Painter, mut rect: Rect, color: Col
     rect.max.x = rect.center().x;
 
     rect = rect.shrink(16.0);
-    for width in [0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 4.0] {
+    for width in [0.05f32, 0.1f32, 0.25f32, 0.5f32, 1.0f32, 2.0f32, 4.0f32] {
         painter.text(
             rect.left_top(),
             Align2::CENTER_CENTER,
@@ -651,8 +655,7 @@ fn main() {
         title: String::from("egui-baseview hello world"),
         size: Size::new(1280.0, 720.0),
         scale: WindowScalePolicy::SystemScaleFactor,
-        #[cfg(feature = "opengl")]
-        gl_config: Some(Default::default()),
+        ..Default::default()
     };
 
     let state = ColorTest::default();
@@ -662,14 +665,10 @@ fn main() {
         GraphicsConfig::default(),
         state,
         |_egui_ctx: &Context, _queue: &mut Queue, _state: &mut ColorTest| {},
-        |egui_ctx: &Context, _queue: &mut Queue, state: &mut ColorTest| {
-            egui::Window::new("egui-baseview hello world").show(egui_ctx, |ui| {
-                ui.label("uwu");
-            });
-
+        |ui: &mut Ui, _queue: &mut Queue, state: &mut ColorTest| {
             egui::Window::new("rendering test")
                 .scroll(true)
-                .show(egui_ctx, |ui| {
+                .show(ui.ctx(), |ui| {
                     state.ui(ui);
                 });
         },
