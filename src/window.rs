@@ -441,8 +441,6 @@ where
             window.set_mouse_cursor(cursor_icon);
         }
 
-        window.focus();
-
         // A temporary workaround for keyboard input not working sometimes.
         // See https://github.com/BillyDM/egui-baseview/issues/20
         #[cfg(feature = "keyboard_focus_workaround")]

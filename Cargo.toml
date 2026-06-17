@@ -1,6 +1,6 @@
 [package]
 name = "egui-baseview"
-version = "0.2.6"
+version = "0.2.7"
 edition = "2024"
 authors = ["Billy Messenger <billydm@noreply.codeberg.org>"]
 repository = "https://codeberg.org/RustAudio/egui-baseview"
