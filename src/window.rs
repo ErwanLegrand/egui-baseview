@@ -438,22 +438,19 @@ where
         if self.current_cursor_icon != cursor_icon {
             self.current_cursor_icon = cursor_icon;
 
-            // TODO: Set mouse cursor for MacOS once baseview supports it.
-            #[cfg(not(target_os = "macos"))]
             window.set_mouse_cursor(cursor_icon);
         }
+
+        window.focus();
 
         // A temporary workaround for keyboard input not working sometimes.
         // See https://github.com/BillyDM/egui-baseview/issues/20
         #[cfg(feature = "keyboard_focus_workaround")]
         {
-            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            if !full_output.platform_output.events.is_empty()
+                || full_output.platform_output.ime.is_some()
             {
-                if !full_output.platform_output.events.is_empty()
-                    || full_output.platform_output.ime.is_some()
-                {
-                    window.focus();
-                }
+                window.focus();
             }
         }
     }
@@ -464,7 +461,6 @@ where
 
         // Parent/embedded windows do not always gain keyboard focus
         // Automatically on click. Request focus explicitly before forwarding the event.
-        #[cfg(not(target_os = "linux"))]
         if matches!(
             event,
             Event::Mouse(baseview::MouseEvent::ButtonPressed { .. })
