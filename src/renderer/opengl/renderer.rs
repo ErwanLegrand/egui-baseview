@@ -1,9 +1,9 @@
-use baseview::{PhySize, Window};
+use super::OpenGlError;
+use baseview::WindowContext;
+use baseview::dpi::PhysicalSize;
 use egui::FullOutput;
 use egui_glow::Painter;
 use std::sync::Arc;
-
-use super::OpenGlError;
 
 #[derive(Debug, Clone)]
 pub struct GraphicsConfig {
@@ -35,10 +35,11 @@ impl Default for GraphicsConfig {
 pub struct Renderer {
     glow_context: Arc<egui_glow::glow::Context>,
     painter: Painter,
+    pub window: WindowContext,
 }
 
 impl Renderer {
-    pub fn new(window: &Window, config: GraphicsConfig) -> Result<Self, OpenGlError> {
+    pub fn new(window: WindowContext, config: GraphicsConfig) -> Result<Self, OpenGlError> {
         let context = window.gl_context().ok_or(OpenGlError::NoContext)?;
         unsafe {
             context.make_current();
@@ -62,6 +63,7 @@ impl Renderer {
         }
 
         Ok(Self {
+            window,
             glow_context,
             painter,
         })
@@ -73,14 +75,13 @@ impl Renderer {
 
     pub fn render(
         &mut self,
-        window: &Window,
         bg_color: egui::Rgba,
-        physical_size: PhySize,
+        physical_size: PhysicalSize<u32>,
         pixels_per_point: f32,
         egui_ctx: &mut egui::Context,
         full_output: &mut FullOutput,
     ) {
-        let PhySize {
+        let PhysicalSize {
             width: canvas_width,
             height: canvas_height,
         } = physical_size;
@@ -88,7 +89,8 @@ impl Renderer {
         let shapes = std::mem::take(&mut full_output.shapes);
         let textures_delta = &mut full_output.textures_delta;
 
-        let context = window
+        let context = self
+            .window
             .gl_context()
             .expect("failed to get baseview gl context");
         unsafe {

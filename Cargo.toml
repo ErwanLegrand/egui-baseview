@@ -13,7 +13,7 @@ readme = "README.md"
 [features]
 default = ["opengl", "tracing"]
 opengl = ["dep:egui_glow", "baseview/opengl"]
-wgpu = ["dep:egui-wgpu", "dep:raw-window-handle-06", "dep:pollster", "dep:wgpu"]
+wgpu = ["dep:egui-wgpu", "dep:pollster", "dep:wgpu"]
 ## Enables a temporary workaround for keyboard input not working sometimes.
 ## See https://codeberg.org/RustAudio/egui-baseview/issues/20
 keyboard_focus_workaround = []
@@ -21,16 +21,16 @@ keyboard_focus_workaround = []
 nice-log = ["dep:nice-plug-core"]
 ## Enable this if `nice-log` is disabled
 tracing = ["dep:tracing"]
+raw-window-handle-06 = [] # deprecated, will be removed in next major version
 
 [dependencies]
-baseview = "0.1.4"
-raw-window-handle = "0.5"
+baseview = { git = "https://github.com/RustAudio/baseview", branch = "next" }
+raw-window-handle = "0.6"
 egui = { version = "0.34.1", default-features = false, features = ["bytemuck"] }
 egui_glow = { version = "0.34.1", features = ["x11"], optional = true }
 egui-wgpu = { version = "0.34.1", features = ["x11"], optional = true }
 wgpu = { version = "29", optional = true }
-keyboard-types = { version = "0.6", default-features = false }
-raw-window-handle-06 = { package = "raw-window-handle", version = "0.6", optional = true }
+keyboard-types = { version = "0.8.3", default-features = false }
 copypasta = { version = "0.10", default-features = false, features = ["x11"] }
 nice-plug-core = { version = "0.1.3", optional = true }
 tracing = { version = "0.1", optional = true }

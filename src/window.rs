@@ -1,86 +1,71 @@
+use std::cell::{Cell, RefCell};
+use std::marker::PhantomData;
 use std::time::Instant;
 
+use baseview::dpi::{LogicalSize, Size};
 use baseview::{
-    Event, EventStatus, PhySize, Window, WindowHandle, WindowHandler, WindowOpenOptions,
-    WindowScalePolicy,
+    Event, EventStatus, Window, WindowContext, WindowHandle, WindowHandler, WindowOpenOptions,
+    WindowSize,
 };
 use copypasta::ClipboardProvider;
 use egui::{Pos2, Rect, Rgba, ViewportCommand, pos2, vec2};
 use keyboard_types::Modifiers;
-use raw_window_handle::HasRawWindowHandle;
+use raw_window_handle::HasWindowHandle;
 
 use crate::{GraphicsConfig, renderer::Renderer};
 
 #[cfg(feature = "nice-log")]
 use nice_plug_core::{nice_error as error, nice_warn as warn};
-
 #[cfg(all(feature = "tracing", not(feature = "nice-log")))]
 use tracing::{error, warn};
 
 pub struct Queue<'a> {
-    bg_color: &'a mut Rgba,
-    close_requested: &'a mut bool,
-    physical_size: &'a mut PhySize,
-    key_capture: &'a mut KeyCapture,
+    bg_color: Option<Rgba>,
+    close_requested: bool,
+    size: Option<Size>,
+    key_capture: Option<KeyCapture>,
+    _marker: PhantomData<&'a ()>,
 }
 
 impl<'a> Queue<'a> {
-    pub(crate) fn new(
-        bg_color: &'a mut Rgba,
-        close_requested: &'a mut bool,
-        physical_size: &'a mut PhySize,
-        key_capture: &'a mut KeyCapture,
-    ) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
-            bg_color,
-            //renderer,
-            //repaint_requested,
-            close_requested,
-            physical_size,
-            key_capture,
+            bg_color: None,
+            close_requested: false,
+            size: None,
+            key_capture: None,
+            _marker: PhantomData,
         }
     }
 
     /// Set the background color.
     pub fn bg_color(&mut self, bg_color: Rgba) {
-        *self.bg_color = bg_color;
+        self.bg_color = Some(bg_color);
     }
 
     /// Set size of the window.
-    pub fn resize(&mut self, physical_size: PhySize) {
-        *self.physical_size = physical_size;
+    pub fn resize(&mut self, size: impl Into<Size>) {
+        self.size = Some(size.into());
     }
 
     /// Close the window.
     pub fn close_window(&mut self) {
-        *self.close_requested = true;
+        self.close_requested = true;
     }
 
     /// Set how to handle capturing key events from the host.
     pub fn set_key_capture(&mut self, key_capture: KeyCapture) {
-        *self.key_capture = key_capture;
+        self.key_capture = Some(key_capture);
     }
 }
 
 struct OpenSettings {
-    scale_policy: WindowScalePolicy,
-    logical_width: f64,
-    logical_height: f64,
     title: String,
 }
 
 impl OpenSettings {
     fn new(settings: &WindowOpenOptions) -> Self {
-        // WindowScalePolicy does not implement copy/clone.
-        let scale_policy = match &settings.scale {
-            WindowScalePolicy::SystemScaleFactor => WindowScalePolicy::SystemScaleFactor,
-            WindowScalePolicy::ScaleFactor(scale) => WindowScalePolicy::ScaleFactor(*scale),
-        };
-
         Self {
-            scale_policy,
-            logical_width: settings.size.width,
-            logical_height: settings.size.height,
             title: settings.title.clone(),
         }
     }
@@ -107,28 +92,24 @@ where
     U: FnMut(&mut egui::Ui, &mut Queue, &mut State),
     U: 'static + Send,
 {
-    user_state: Option<State>,
-    user_update: U,
+    user_state: RefCell<State>,
+    user_update: RefCell<U>,
 
-    egui_ctx: egui::Context,
+    egui_ctx: RefCell<egui::Context>,
     viewport_id: egui::ViewportId,
     start_time: Instant,
-    egui_input: egui::RawInput,
-    pointer_pos_in_points: Option<egui::Pos2>,
-    current_cursor_icon: baseview::MouseCursor,
+    egui_input: RefCell<egui::RawInput>,
+    pointer_pos_in_points: Cell<Option<egui::Pos2>>,
+    current_cursor_icon: Cell<baseview::MouseCursor>,
 
-    renderer: Renderer,
+    renderer: RefCell<Renderer>,
 
-    clipboard_ctx: Option<copypasta::ClipboardContext>,
+    clipboard_ctx: RefCell<Option<copypasta::ClipboardContext>>,
 
-    physical_size: PhySize,
-    scale_policy: WindowScalePolicy,
-    pixels_per_point: f32,
-    points_per_pixel: f32,
-    bg_color: Rgba,
-    close_requested: bool,
-    repaint_after: Option<Instant>,
-    key_capture: KeyCapture,
+    bg_color: Cell<Rgba>,
+    repaint_after: Cell<Option<Instant>>,
+    key_capture: RefCell<KeyCapture>,
+    pub window: WindowContext,
 }
 
 impl<State, U> EguiWindow<State, U>
@@ -138,7 +119,7 @@ where
     U: 'static + Send,
 {
     fn new<B>(
-        window: &mut baseview::Window<'_>,
+        window: WindowContext,
         open_settings: OpenSettings,
         graphics_config: GraphicsConfig,
         mut build: B,
@@ -149,32 +130,24 @@ where
         B: FnMut(&egui::Context, &mut Queue, &mut State),
         B: 'static + Send,
     {
-        let renderer = Renderer::new(window, graphics_config).unwrap_or_else(|err| {
+        let renderer = Renderer::new(window.clone(), graphics_config).unwrap_or_else(|err| {
             // TODO: better error log and not panicking, but that's gonna require baseview changes
             error!("oops! the gpu backend couldn't initialize! \n {err}");
             panic!("gpu backend failed to initialize: \n {err}")
         });
         let egui_ctx = egui::Context::default();
 
-        // Assume scale for now until there is an event with a new one.
-        let pixels_per_point = match open_settings.scale_policy {
-            WindowScalePolicy::ScaleFactor(scale) => scale,
-            WindowScalePolicy::SystemScaleFactor => 1.0,
-        } as f32;
-        let points_per_pixel = pixels_per_point.recip();
+        let size = window.size();
 
         let screen_rect = Rect::from_min_size(
             Pos2::new(0f32, 0f32),
-            vec2(
-                open_settings.logical_width as f32,
-                open_settings.logical_height as f32,
-            ),
+            vec2(size.logical.width as f32, size.logical.height as f32),
         );
 
         let viewport_info = egui::ViewportInfo {
             parent: None,
             title: Some(open_settings.title),
-            native_pixels_per_point: Some(pixels_per_point),
+            native_pixels_per_point: Some(size.scale_factor as f32),
             focused: Some(true),
             inner_rect: Some(screen_rect),
             ..Default::default()
@@ -188,28 +161,12 @@ where
         };
         let _ = egui_input.viewports.insert(viewport_id, viewport_info);
 
-        let mut physical_size = PhySize {
-            width: (open_settings.logical_width * pixels_per_point as f64).round() as u32,
-            height: (open_settings.logical_height * pixels_per_point as f64).round() as u32,
-        };
+        let mut queue = Queue::new();
 
-        let mut bg_color = Rgba::BLACK;
-        let mut close_requested = false;
-        let old_physical_size = physical_size;
-        let mut key_capture = KeyCapture::default();
-        let mut queue = Queue::new(
-            &mut bg_color,
-            &mut close_requested,
-            &mut physical_size,
-            &mut key_capture,
-        );
         (build)(&egui_ctx, &mut queue, &mut state);
 
-        if physical_size != old_physical_size {
-            window.resize(baseview::Size {
-                width: physical_size.width as f64,
-                height: physical_size.height as f64,
-            });
+        if let Some(new_size) = queue.size {
+            window.resize(new_size);
         }
 
         let clipboard_ctx = match copypasta::ClipboardContext::new() {
@@ -223,28 +180,24 @@ where
         let start_time = Instant::now();
 
         Self {
-            user_state: Some(state),
-            user_update: update,
+            user_state: state.into(),
+            user_update: update.into(),
 
-            egui_ctx,
+            window,
+            egui_ctx: egui_ctx.into(),
             viewport_id,
             start_time,
-            egui_input,
-            pointer_pos_in_points: None,
-            current_cursor_icon: baseview::MouseCursor::Default,
+            egui_input: egui_input.into(),
+            pointer_pos_in_points: None.into(),
+            current_cursor_icon: baseview::MouseCursor::Default.into(),
 
-            renderer,
+            renderer: renderer.into(),
+            bg_color: queue.bg_color.unwrap_or(Rgba::BLACK).into(),
 
-            clipboard_ctx,
+            clipboard_ctx: clipboard_ctx.into(),
 
-            physical_size,
-            pixels_per_point,
-            points_per_pixel,
-            scale_policy: open_settings.scale_policy,
-            bg_color,
-            close_requested,
-            repaint_after: Some(start_time),
-            key_capture,
+            repaint_after: Some(start_time).into(),
+            key_capture: queue.key_capture.unwrap_or_default().into(),
         }
     }
 
@@ -266,7 +219,7 @@ where
         update: U,
     ) -> WindowHandle
     where
-        P: HasRawWindowHandle,
+        P: HasWindowHandle,
         B: FnMut(&egui::Context, &mut Queue, &mut State),
         B: 'static + Send,
     {
@@ -277,13 +230,9 @@ where
 
         let open_settings = OpenSettings::new(&settings);
 
-        Window::open_parented(
-            parent,
-            settings,
-            move |window: &mut baseview::Window<'_>| -> EguiWindow<State, U> {
-                EguiWindow::new(window, open_settings, graphics_config, build, update, state)
-            },
-        )
+        Window::open_parented(parent, settings, move |window| -> EguiWindow<State, U> {
+            EguiWindow::new(window, open_settings, graphics_config, build, update, state)
+        })
     }
 
     /// Open a new window that blocks the current thread until the window is destroyed.
@@ -311,19 +260,17 @@ where
 
         let open_settings = OpenSettings::new(&settings);
 
-        Window::open_blocking(
-            settings,
-            move |window: &mut baseview::Window<'_>| -> EguiWindow<State, U> {
-                EguiWindow::new(window, open_settings, graphics_config, build, update, state)
-            },
-        )
+        Window::open_blocking(settings, move |window| -> EguiWindow<State, U> {
+            EguiWindow::new(window, open_settings, graphics_config, build, update, state)
+        })
     }
 
     /// Update the pressed key modifiers when a mouse event has sent a new set of modifiers.
-    fn update_modifiers(&mut self, modifiers: &Modifiers) {
-        self.egui_input.modifiers.alt = !(*modifiers & Modifiers::ALT).is_empty();
-        self.egui_input.modifiers.shift = !(*modifiers & Modifiers::SHIFT).is_empty();
-        self.egui_input.modifiers.command = !(*modifiers & Modifiers::CONTROL).is_empty();
+    fn update_modifiers(&self, modifiers: &Modifiers) {
+        let mut egui_input = self.egui_input.borrow_mut();
+        egui_input.modifiers.alt = !(*modifiers & Modifiers::ALT).is_empty();
+        egui_input.modifiers.shift = !(*modifiers & Modifiers::SHIFT).is_empty();
+        egui_input.modifiers.command = !(*modifiers & Modifiers::CONTROL).is_empty();
     }
 }
 
@@ -333,32 +280,26 @@ where
     U: FnMut(&mut egui::Ui, &mut Queue, &mut State),
     U: 'static + Send,
 {
-    fn on_frame(&mut self, window: &mut Window) {
-        let Some(state) = &mut self.user_state else {
-            return;
+    fn on_frame(&self) {
+        let egui_input = {
+            let mut egui_input = self.egui_input.borrow_mut();
+            egui_input.time = Some(self.start_time.elapsed().as_secs_f64());
+            egui_input.screen_rect = Some(calculate_screen_rect(self.window.size()));
+            egui_input.take()
         };
 
-        self.egui_input.time = Some(self.start_time.elapsed().as_secs_f64());
-        self.egui_input.screen_rect = Some(calculate_screen_rect(
-            self.physical_size,
-            self.points_per_pixel,
-        ));
-
         //let mut repaint_requested = false;
-        let old_physical_size = self.physical_size;
-        let mut queue = Queue::new(
-            &mut self.bg_color,
-            &mut self.close_requested,
-            &mut self.physical_size,
-            &mut self.key_capture,
-        );
+        let mut queue = Queue::new();
 
-        let mut full_output = self.egui_ctx.run_ui(self.egui_input.take(), |ui| {
-            (self.user_update)(ui, &mut queue, state)
-        });
+        let mut full_output = {
+            let egui_ctx = self.egui_ctx.borrow_mut();
+            egui_ctx.run_ui(egui_input, |ui| {
+                self.user_update.borrow_mut()(ui, &mut queue, &mut self.user_state.borrow_mut())
+            })
+        };
 
-        if self.close_requested {
-            window.close();
+        if queue.close_requested {
+            self.window.request_close();
         }
 
         // Prevent data from being allocated every frame by storing this
@@ -366,57 +307,54 @@ where
 
         let Some(viewport_output) = full_output.viewport_output.get(&self.viewport_id) else {
             // The main window was closed by egui.
-            window.close();
+            self.window.request_close();
             return;
         };
 
         for command in viewport_output.commands.iter() {
             match command {
                 ViewportCommand::Close => {
-                    window.close();
+                    self.window.request_close();
                 }
-                ViewportCommand::InnerSize(size) => window.resize(baseview::Size {
-                    width: size.x.max(1.0) as f64,
-                    height: size.y.max(1.0) as f64,
+                ViewportCommand::InnerSize(size) => self.window.resize(LogicalSize {
+                    width: size.x.max(1.0),
+                    height: size.y.max(1.0),
                 }),
                 _ => {}
             }
         }
 
-        if self.physical_size != old_physical_size {
-            window.resize(baseview::Size {
-                width: self.physical_size.width.max(1) as f64,
-                height: self.physical_size.height.max(1) as f64,
-            });
+        if let Some(size) = queue.size {
+            self.window.resize(size);
         }
 
         let now = Instant::now();
-        let do_repaint_now = if let Some(t) = self.repaint_after {
+        let do_repaint_now = if let Some(t) = self.repaint_after.get() {
             now >= t || viewport_output.repaint_delay.is_zero()
         } else {
             viewport_output.repaint_delay.is_zero()
         };
 
         if do_repaint_now {
-            self.renderer.render(
-                window,
-                self.bg_color,
-                self.physical_size,
-                self.pixels_per_point,
-                &mut self.egui_ctx,
+            let size = self.window.size();
+            self.renderer.borrow_mut().render(
+                self.bg_color.get(),
+                size.physical,
+                size.scale_factor as f32,
+                &mut self.egui_ctx.borrow_mut(),
                 &mut full_output,
             );
 
-            self.repaint_after = None;
+            self.repaint_after.set(None);
         } else if let Some(repaint_after) = now.checked_add(viewport_output.repaint_delay) {
             // Schedule to repaint after the requested time has elapsed.
-            self.repaint_after = Some(repaint_after);
+            self.repaint_after.set(Some(repaint_after));
         }
 
         for command in full_output.platform_output.commands {
             match command {
                 egui::OutputCommand::CopyText(text) => {
-                    if let Some(clipboard_ctx) = &mut self.clipboard_ctx
+                    if let Some(clipboard_ctx) = self.clipboard_ctx.borrow_mut().as_mut()
                         && let Err(err) = clipboard_ctx.set_contents(text)
                     {
                         error!("Copy/Cut error: {}", err);
@@ -435,10 +373,10 @@ where
 
         let cursor_icon =
             crate::translate::translate_cursor_icon(full_output.platform_output.cursor_icon);
-        if self.current_cursor_icon != cursor_icon {
-            self.current_cursor_icon = cursor_icon;
+        if self.current_cursor_icon.get() != cursor_icon {
+            self.current_cursor_icon.set(cursor_icon);
 
-            window.set_mouse_cursor(cursor_icon);
+            self.window.set_mouse_cursor(cursor_icon);
         }
 
         // A temporary workaround for keyboard input not working sometimes.
@@ -453,8 +391,23 @@ where
         }
     }
 
+    fn resized(&self, new_size: WindowSize) {
+        let screen_rect = calculate_screen_rect(new_size);
+
+        let mut egui_input = self.egui_input.borrow_mut();
+
+        egui_input.screen_rect = Some(screen_rect);
+
+        let viewport_info = egui_input.viewports.get_mut(&self.viewport_id).unwrap();
+        viewport_info.native_pixels_per_point = Some(new_size.scale_factor as f32);
+        viewport_info.inner_rect = Some(screen_rect);
+
+        // Schedule to repaint on the next frame.
+        self.repaint_after.set(Some(Instant::now()));
+    }
+
     #[allow(unused_variables)]
-    fn on_event(&mut self, window: &mut Window, event: Event) -> EventStatus {
+    fn on_event(&self, event: Event) -> EventStatus {
         let mut return_status = EventStatus::Captured;
 
         // Parent/embedded windows do not always gain keyboard focus
@@ -462,9 +415,9 @@ where
         if matches!(
             event,
             Event::Mouse(baseview::MouseEvent::ButtonPressed { .. })
-        ) && !window.has_focus()
+        ) && !self.window.has_focus()
         {
-            window.focus();
+            self.window.focus();
         }
 
         match &event {
@@ -476,34 +429,41 @@ where
                     self.update_modifiers(modifiers);
 
                     let pos = pos2(position.x as f32, position.y as f32);
-                    self.pointer_pos_in_points = Some(pos);
-                    self.egui_input.events.push(egui::Event::PointerMoved(pos));
+                    self.pointer_pos_in_points.set(Some(pos));
+                    self.egui_input
+                        .borrow_mut()
+                        .events
+                        .push(egui::Event::PointerMoved(pos));
                 }
                 baseview::MouseEvent::ButtonPressed { button, modifiers } => {
                     self.update_modifiers(modifiers);
 
-                    if let Some(pos) = self.pointer_pos_in_points
+                    if let Some(pos) = self.pointer_pos_in_points.get()
                         && let Some(button) = crate::translate::translate_mouse_button(*button)
                     {
-                        self.egui_input.events.push(egui::Event::PointerButton {
+                        let mut egui_input = self.egui_input.borrow_mut();
+                        let modifiers = egui_input.modifiers;
+                        egui_input.events.push(egui::Event::PointerButton {
                             pos,
                             button,
                             pressed: true,
-                            modifiers: self.egui_input.modifiers,
+                            modifiers,
                         });
                     }
                 }
                 baseview::MouseEvent::ButtonReleased { button, modifiers } => {
                     self.update_modifiers(modifiers);
 
-                    if let Some(pos) = self.pointer_pos_in_points
+                    if let Some(pos) = self.pointer_pos_in_points.get()
                         && let Some(button) = crate::translate::translate_mouse_button(*button)
                     {
-                        self.egui_input.events.push(egui::Event::PointerButton {
+                        let mut egui_input = self.egui_input.borrow_mut();
+                        let modifiers = egui_input.modifiers;
+                        egui_input.events.push(egui::Event::PointerButton {
                             pos,
                             button,
                             pressed: false,
-                            modifiers: self.egui_input.modifiers,
+                            modifiers,
                         });
                     }
                 }
@@ -521,7 +481,7 @@ where
 
                         baseview::ScrollDelta::Pixels { x, y } => (
                             egui::MouseWheelUnit::Point,
-                            egui::vec2(*x, *y) * self.points_per_pixel,
+                            egui::vec2(*x, *y) * self.window.scale_factor() as f32,
                         ),
                     };
 
@@ -533,16 +493,21 @@ where
                         delta.x *= -1.0;
                     }
 
-                    self.egui_input.events.push(egui::Event::MouseWheel {
+                    let mut egui_input = self.egui_input.borrow_mut();
+                    let modifiers = egui_input.modifiers;
+                    egui_input.events.push(egui::Event::MouseWheel {
                         unit,
                         delta,
-                        modifiers: self.egui_input.modifiers,
+                        modifiers,
                         phase: egui::TouchPhase::Move,
                     });
                 }
                 baseview::MouseEvent::CursorLeft => {
-                    self.pointer_pos_in_points = None;
-                    self.egui_input.events.push(egui::Event::PointerGone);
+                    self.pointer_pos_in_points.set(None);
+                    self.egui_input
+                        .borrow_mut()
+                        .events
+                        .push(egui::Event::PointerGone);
                 }
                 _ => {}
             },
@@ -550,23 +515,24 @@ where
                 use keyboard_types::Code;
 
                 let pressed = event.state == keyboard_types::KeyState::Down;
+                let mut egui_input = self.egui_input.borrow_mut();
 
                 match event.code {
-                    Code::ShiftLeft | Code::ShiftRight => self.egui_input.modifiers.shift = pressed,
+                    Code::ShiftLeft | Code::ShiftRight => egui_input.modifiers.shift = pressed,
                     Code::ControlLeft | Code::ControlRight => {
-                        self.egui_input.modifiers.ctrl = pressed;
+                        egui_input.modifiers.ctrl = pressed;
 
                         #[cfg(not(target_os = "macos"))]
                         {
-                            self.egui_input.modifiers.command = pressed;
+                            egui_input.modifiers.command = pressed;
                         }
                     }
-                    Code::AltLeft | Code::AltRight => self.egui_input.modifiers.alt = pressed,
+                    Code::AltLeft | Code::AltRight => egui_input.modifiers.alt = pressed,
                     Code::MetaLeft | Code::MetaRight => {
                         #[cfg(target_os = "macos")]
                         {
-                            self.egui_input.modifiers.mac_cmd = pressed;
-                            self.egui_input.modifiers.command = pressed;
+                            egui_input.modifiers.mac_cmd = pressed;
+                            egui_input.modifiers.command = pressed;
                         }
                         // prevent `rustfmt` from breaking this
                     }
@@ -574,46 +540,45 @@ where
                 }
 
                 if let Some(key) = crate::translate::translate_virtual_key(&event.key) {
-                    self.egui_input.events.push(egui::Event::Key {
+                    let mut egui_input = self.egui_input.borrow_mut();
+                    let modifiers = egui_input.modifiers;
+                    egui_input.events.push(egui::Event::Key {
                         key,
                         physical_key: None,
                         pressed,
                         repeat: event.repeat,
-                        modifiers: self.egui_input.modifiers,
+                        modifiers,
                     });
                 }
 
                 if pressed {
+                    let mut egui_input = self.egui_input.borrow_mut();
                     // VirtualKeyCode::Paste etc in winit are broken/untrustworthy,
                     // so we detect these things manually:
                     //
                     // TODO: See if this is an issue in baseview as well.
-                    if is_cut_command(self.egui_input.modifiers, event.code) {
-                        self.egui_input.events.push(egui::Event::Cut);
-                    } else if is_copy_command(self.egui_input.modifiers, event.code) {
-                        self.egui_input.events.push(egui::Event::Copy);
-                    } else if is_paste_command(self.egui_input.modifiers, event.code) {
-                        if let Some(clipboard_ctx) = &mut self.clipboard_ctx {
+                    if is_cut_command(egui_input.modifiers, event.code) {
+                        egui_input.events.push(egui::Event::Cut);
+                    } else if is_copy_command(egui_input.modifiers, event.code) {
+                        egui_input.events.push(egui::Event::Copy);
+                    } else if is_paste_command(egui_input.modifiers, event.code) {
+                        if let Some(clipboard_ctx) = self.clipboard_ctx.borrow_mut().as_mut() {
                             match clipboard_ctx.get_contents() {
-                                Ok(contents) => {
-                                    self.egui_input.events.push(egui::Event::Text(contents))
-                                }
+                                Ok(contents) => egui_input.events.push(egui::Event::Text(contents)),
                                 Err(err) => {
                                     error!("Paste error: {}", err);
                                 }
                             }
                         }
                     } else if let keyboard_types::Key::Character(written) = &event.key
-                        && !self.egui_input.modifiers.ctrl
-                        && !self.egui_input.modifiers.command
+                        && !egui_input.modifiers.ctrl
+                        && !egui_input.modifiers.command
                     {
-                        self.egui_input
-                            .events
-                            .push(egui::Event::Text(written.clone()));
+                        egui_input.events.push(egui::Event::Text(written.clone()));
                     }
                 }
 
-                match &self.key_capture {
+                match &*self.key_capture.borrow() {
                     KeyCapture::CaptureAll => {}
                     KeyCapture::IgnoreAll => return_status = EventStatus::Ignored,
                     KeyCapture::CaptureKeys(keys) => {
@@ -629,76 +594,51 @@ where
                 }
             }
             baseview::Event::Window(event) => match event {
-                baseview::WindowEvent::Resized(window_info) => {
-                    self.pixels_per_point = match self.scale_policy {
-                        WindowScalePolicy::ScaleFactor(scale) => scale,
-                        WindowScalePolicy::SystemScaleFactor => window_info.scale(),
-                    } as f32;
-                    self.points_per_pixel = self.pixels_per_point.recip();
-
-                    self.physical_size = window_info.physical_size();
-
-                    let screen_rect =
-                        calculate_screen_rect(self.physical_size, self.points_per_pixel);
-
-                    self.egui_input.screen_rect = Some(screen_rect);
-
-                    let viewport_info = self
-                        .egui_input
-                        .viewports
-                        .get_mut(&self.viewport_id)
-                        .unwrap();
-                    viewport_info.native_pixels_per_point = Some(self.pixels_per_point);
-                    viewport_info.inner_rect = Some(screen_rect);
-
-                    // Schedule to repaint on the next frame.
-                    self.repaint_after = Some(Instant::now());
-                }
                 baseview::WindowEvent::Focused => {
-                    self.egui_input
-                        .events
-                        .push(egui::Event::WindowFocused(true));
-                    self.egui_input
+                    let mut egui_input = self.egui_input.borrow_mut();
+                    egui_input.events.push(egui::Event::WindowFocused(true));
+                    egui_input
                         .viewports
                         .get_mut(&self.viewport_id)
                         .unwrap()
                         .focused = Some(true);
                 }
                 baseview::WindowEvent::Unfocused => {
-                    self.egui_input
-                        .events
-                        .push(egui::Event::WindowFocused(false));
-                    self.egui_input
+                    let mut egui_input = self.egui_input.borrow_mut();
+                    egui_input.events.push(egui::Event::WindowFocused(false));
+                    egui_input
                         .viewports
                         .get_mut(&self.viewport_id)
                         .unwrap()
                         .focused = Some(false);
                 }
                 baseview::WindowEvent::WillClose => {}
+                _ => {}
             },
+            _ => {}
         }
 
         // For keyboard events, also check if egui actually wants keyboard input
         // This allows DAW shortcuts (spacebar, etc.) to pass through when no text field is focused
         match &event {
             baseview::Event::Keyboard(_) => {
-                if return_status == EventStatus::Captured
-                    && !self.egui_ctx.egui_wants_keyboard_input()
-                {
+                let egui_ctx = self.egui_ctx.borrow();
+                if return_status == EventStatus::Captured && !egui_ctx.egui_wants_keyboard_input() {
                     EventStatus::Ignored
                 } else {
                     return_status
                 }
             }
             baseview::Event::Mouse(_) => {
-                if self.egui_ctx.egui_is_using_pointer() || self.egui_ctx.egui_wants_pointer_input()
-                {
+                let egui_ctx = self.egui_ctx.borrow();
+                if egui_ctx.egui_is_using_pointer() || egui_ctx.egui_wants_pointer_input() {
                     EventStatus::Captured
                 } else {
                     EventStatus::Ignored
                 }
             }
             baseview::Event::Window(_) => EventStatus::Captured,
+            _ => EventStatus::Ignored,
         }
     }
 }
@@ -725,10 +665,9 @@ fn is_paste_command(modifiers: egui::Modifiers, keycode: keyboard_types::Code) -
 }
 
 /// Calculate screen rectangle in logical size.
-fn calculate_screen_rect(physical_size: PhySize, points_per_pixel: f32) -> Rect {
-    let logical_size = (
-        physical_size.width as f32 * points_per_pixel,
-        physical_size.height as f32 * points_per_pixel,
-    );
-    Rect::from_min_size(Pos2::new(0f32, 0f32), vec2(logical_size.0, logical_size.1))
+fn calculate_screen_rect(size: WindowSize) -> Rect {
+    Rect::from_min_size(
+        Pos2::new(0f32, 0f32),
+        vec2(size.logical.width as f32, size.logical.height as f32),
+    )
 }

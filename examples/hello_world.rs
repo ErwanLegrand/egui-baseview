@@ -1,14 +1,12 @@
-use baseview::{Size, WindowOpenOptions, WindowScalePolicy};
+use baseview::WindowOpenOptions;
+use baseview::dpi::LogicalSize;
 use egui::{CentralPanel, Context, Ui};
 use egui_baseview::{EguiWindow, GraphicsConfig, Queue};
 
 fn main() {
-    let settings = WindowOpenOptions {
-        title: String::from("egui-baseview hello world"),
-        size: Size::new(300.0, 110.0),
-        scale: WindowScalePolicy::SystemScaleFactor,
-        ..Default::default()
-    };
+    let settings = WindowOpenOptions::new()
+        .with_title("egui-baseview hello world")
+        .with_size(LogicalSize::new(300.0, 110.0));
 
     let state = ();
 
