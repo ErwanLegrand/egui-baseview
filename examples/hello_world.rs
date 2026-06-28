@@ -11,7 +11,7 @@ fn main() {
         state,
         |_egui_ctx: &Context, _queue: &mut Queue, _state: &mut ()| {},
         |ui: &mut Ui, _queue: &mut Queue, _state: &mut ()| {
-            CentralPanel::default().show_inside(ui, |ui| {
+            CentralPanel::default().show(ui, |ui| {
                 ui.label("Hello World!");
             });
         },

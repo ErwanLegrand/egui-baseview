@@ -25,9 +25,9 @@ tracing = ["dep:tracing"]
 [dependencies]
 baseview = "0.1.4"
 raw-window-handle = "0.5"
-egui = { version = "0.34.1", default-features = false, features = ["bytemuck"] }
-egui_glow = { version = "0.34.1", features = ["x11"], optional = true }
-egui-wgpu = { version = "0.34.1", features = ["x11"], optional = true }
+egui = { version = "0.35.0", default-features = false, features = ["bytemuck"] }
+egui_glow = { version = "0.35.0", features = ["x11"], optional = true }
+egui-wgpu = { version = "0.35.0", features = ["x11"], optional = true }
 wgpu = { version = "29", optional = true }
 keyboard-types = { version = "0.6", default-features = false }
 raw-window-handle-06 = { package = "raw-window-handle", version = "0.6", optional = true }
@@ -39,4 +39,4 @@ pollster = { version = "0.4.0", optional = true }
 thiserror = "2"
 
 [dev-dependencies]
-egui = { version = "0.34.1", features = ["default_fonts"] }
+egui = { version = "0.35.0", features = ["default_fonts"] }

@@ -15,7 +15,7 @@ fn main() {
         // Called before each frame. Here you should update the state of your
         // application and build the UI.
         |ui: &mut Ui, queue: &mut Queue, state: &mut State| {
-            CentralPanel::default().show_inside(ui, |ui| {
+            CentralPanel::default().show(ui, |ui| {
                 ui.heading("My Egui Application");
                 ui.horizontal(|ui| {
                     ui.label("Your name: ");
