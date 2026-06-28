@@ -302,6 +302,7 @@ where
     {
         Window::open_parented(
             parent,
+            #[allow(clippy::needless_update)]
             WindowOpenOptions {
                 title: settings.title.clone(),
                 size: settings.logical_size,
@@ -330,6 +331,7 @@ where
         B: 'static + Send,
     {
         Window::open_blocking(
+            #[allow(clippy::needless_update)]
             WindowOpenOptions {
                 title: settings.title.clone(),
                 size: settings.logical_size,
