@@ -1,20 +1,13 @@
-use baseview::{Size, WindowOpenOptions, WindowScalePolicy};
 use egui::{CentralPanel, Context, Ui};
-use egui_baseview::{EguiWindow, GraphicsConfig, Queue};
+use egui_baseview::{EguiWindow, EguiWindowSettings, Queue, baseview::Size};
 
 fn main() {
-    let settings = WindowOpenOptions {
-        title: String::from("egui-baseview simple demo"),
-        size: Size::new(400.0, 200.0),
-        scale: WindowScalePolicy::SystemScaleFactor,
-        ..Default::default()
-    };
-
     let state = State::new();
 
     EguiWindow::open_blocking(
-        settings,
-        GraphicsConfig::default(),
+        EguiWindowSettings::new()
+            .with_tile("egui-baseview simple demo")
+            .with_logical_size(Size::new(400.0, 200.0)),
         state,
         // Called once before the first frame. Allows you to do setup code and to
         // call `ctx.set_fonts()`. Optional.

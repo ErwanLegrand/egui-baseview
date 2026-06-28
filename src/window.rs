@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use baseview::{
-    Event, EventStatus, PhySize, Window, WindowHandle, WindowHandler, WindowOpenOptions,
+    Event, EventStatus, PhySize, Size, Window, WindowHandle, WindowHandler, WindowOpenOptions,
     WindowScalePolicy,
 };
 use copypasta::ClipboardProvider;
@@ -16,6 +16,62 @@ use nice_plug_core::{nice_error as error, nice_warn as warn};
 
 #[cfg(all(feature = "tracing", not(feature = "nice-log")))]
 use tracing::{error, warn};
+
+#[derive(Debug, Clone)]
+pub struct EguiWindowSettings {
+    pub title: String,
+
+    /// The logical size of the window
+    ///
+    /// These dimensions will be scaled by the scaling policy specified in `scale`. Mouse
+    /// position will be passed back as logical coordinates.
+    pub logical_size: Size,
+
+    /// The dpi scaling policy
+    pub scale_policy: WindowScalePolicy,
+
+    pub graphics: GraphicsConfig,
+}
+
+impl EguiWindowSettings {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_tile(mut self, title: impl Into<String>) -> Self {
+        self.title = title.into();
+        self
+    }
+
+    pub fn with_logical_size(mut self, size: Size) -> Self {
+        self.logical_size = size;
+        self
+    }
+
+    pub fn with_scale_policy(mut self, scale_policy: WindowScalePolicy) -> Self {
+        self.scale_policy = scale_policy;
+        self
+    }
+
+    pub fn with_graphics_config(mut self, config: GraphicsConfig) -> Self {
+        self.graphics = config;
+        self
+    }
+}
+
+impl Default for EguiWindowSettings {
+    fn default() -> Self {
+        Self {
+            title: String::new(),
+            logical_size: Size {
+                width: 300.0,
+                height: 200.0,
+            },
+            scale_policy: WindowScalePolicy::default(),
+            graphics: GraphicsConfig::default(),
+        }
+    }
+}
 
 pub struct Queue<'a> {
     bg_color: &'a mut Rgba,
@@ -59,30 +115,6 @@ impl<'a> Queue<'a> {
     /// Set how to handle capturing key events from the host.
     pub fn set_key_capture(&mut self, key_capture: KeyCapture) {
         *self.key_capture = key_capture;
-    }
-}
-
-struct OpenSettings {
-    scale_policy: WindowScalePolicy,
-    logical_width: f64,
-    logical_height: f64,
-    title: String,
-}
-
-impl OpenSettings {
-    fn new(settings: &WindowOpenOptions) -> Self {
-        // WindowScalePolicy does not implement copy/clone.
-        let scale_policy = match &settings.scale {
-            WindowScalePolicy::SystemScaleFactor => WindowScalePolicy::SystemScaleFactor,
-            WindowScalePolicy::ScaleFactor(scale) => WindowScalePolicy::ScaleFactor(*scale),
-        };
-
-        Self {
-            scale_policy,
-            logical_width: settings.size.width,
-            logical_height: settings.size.height,
-            title: settings.title.clone(),
-        }
     }
 }
 
@@ -139,8 +171,7 @@ where
 {
     fn new<B>(
         window: &mut baseview::Window<'_>,
-        open_settings: OpenSettings,
-        graphics_config: GraphicsConfig,
+        settings: EguiWindowSettings,
         mut build: B,
         update: U,
         mut state: State,
@@ -149,7 +180,7 @@ where
         B: FnMut(&egui::Context, &mut Queue, &mut State),
         B: 'static + Send,
     {
-        let renderer = Renderer::new(window, graphics_config).unwrap_or_else(|err| {
+        let renderer = Renderer::new(window, settings.graphics).unwrap_or_else(|err| {
             // TODO: better error log and not panicking, but that's gonna require baseview changes
             error!("oops! the gpu backend couldn't initialize! \n {err}");
             panic!("gpu backend failed to initialize: \n {err}")
@@ -157,7 +188,7 @@ where
         let egui_ctx = egui::Context::default();
 
         // Assume scale for now until there is an event with a new one.
-        let pixels_per_point = match open_settings.scale_policy {
+        let pixels_per_point = match settings.scale_policy {
             WindowScalePolicy::ScaleFactor(scale) => scale,
             WindowScalePolicy::SystemScaleFactor => 1.0,
         } as f32;
@@ -166,14 +197,14 @@ where
         let screen_rect = Rect::from_min_size(
             Pos2::new(0f32, 0f32),
             vec2(
-                open_settings.logical_width as f32,
-                open_settings.logical_height as f32,
+                settings.logical_size.width as f32,
+                settings.logical_size.height as f32,
             ),
         );
 
         let viewport_info = egui::ViewportInfo {
             parent: None,
-            title: Some(open_settings.title),
+            title: Some(settings.title),
             native_pixels_per_point: Some(pixels_per_point),
             focused: Some(true),
             inner_rect: Some(screen_rect),
@@ -189,8 +220,8 @@ where
         let _ = egui_input.viewports.insert(viewport_id, viewport_info);
 
         let mut physical_size = PhySize {
-            width: (open_settings.logical_width * pixels_per_point as f64).round() as u32,
-            height: (open_settings.logical_height * pixels_per_point as f64).round() as u32,
+            width: (settings.logical_size.width * pixels_per_point as f64).round() as u32,
+            height: (settings.logical_size.height * pixels_per_point as f64).round() as u32,
         };
 
         let mut bg_color = Rgba::BLACK;
@@ -240,7 +271,7 @@ where
             physical_size,
             pixels_per_point,
             points_per_pixel,
-            scale_policy: open_settings.scale_policy,
+            scale_policy: settings.scale_policy,
             bg_color,
             close_requested,
             repaint_after: Some(start_time),
@@ -259,8 +290,7 @@ where
     ///   application and build the UI.
     pub fn open_parented<P, B>(
         parent: &P,
-        #[allow(unused_mut)] mut settings: WindowOpenOptions,
-        graphics_config: GraphicsConfig,
+        settings: EguiWindowSettings,
         state: State,
         build: B,
         update: U,
@@ -270,18 +300,18 @@ where
         B: FnMut(&egui::Context, &mut Queue, &mut State),
         B: 'static + Send,
     {
-        #[cfg(feature = "opengl")]
-        if settings.gl_config.is_none() {
-            settings.gl_config = Some(Default::default());
-        }
-
-        let open_settings = OpenSettings::new(&settings);
-
         Window::open_parented(
             parent,
-            settings,
+            WindowOpenOptions {
+                title: settings.title.clone(),
+                size: settings.logical_size,
+                scale: settings.scale_policy,
+                #[cfg(feature = "opengl")]
+                gl_config: Some(settings.graphics.gl_config.clone()),
+                ..Default::default()
+            },
             move |window: &mut baseview::Window<'_>| -> EguiWindow<State, U> {
-                EguiWindow::new(window, open_settings, graphics_config, build, update, state)
+                EguiWindow::new(window, settings, build, update, state)
             },
         )
     }
@@ -294,27 +324,22 @@ where
     ///   call `ctx.set_fonts()`. Optional.
     /// * `update` - Called before each frame. Here you should update the state of your
     ///   application and build the UI.
-    pub fn open_blocking<B>(
-        #[allow(unused_mut)] mut settings: WindowOpenOptions,
-        graphics_config: GraphicsConfig,
-        state: State,
-        build: B,
-        update: U,
-    ) where
+    pub fn open_blocking<B>(settings: EguiWindowSettings, state: State, build: B, update: U)
+    where
         B: FnMut(&egui::Context, &mut Queue, &mut State),
         B: 'static + Send,
     {
-        #[cfg(feature = "opengl")]
-        if settings.gl_config.is_none() {
-            settings.gl_config = Some(Default::default());
-        }
-
-        let open_settings = OpenSettings::new(&settings);
-
         Window::open_blocking(
-            settings,
+            WindowOpenOptions {
+                title: settings.title.clone(),
+                size: settings.logical_size,
+                scale: settings.scale_policy,
+                #[cfg(feature = "opengl")]
+                gl_config: Some(settings.graphics.gl_config.clone()),
+                ..Default::default()
+            },
             move |window: &mut baseview::Window<'_>| -> EguiWindow<State, U> {
-                EguiWindow::new(window, open_settings, graphics_config, build, update, state)
+                EguiWindow::new(window, settings, build, update, state)
             },
         )
     }

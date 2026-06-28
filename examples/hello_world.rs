@@ -1,20 +1,13 @@
-use baseview::{Size, WindowOpenOptions, WindowScalePolicy};
 use egui::{CentralPanel, Context, Ui};
-use egui_baseview::{EguiWindow, GraphicsConfig, Queue};
+use egui_baseview::{EguiWindow, EguiWindowSettings, Queue, baseview::Size};
 
 fn main() {
-    let settings = WindowOpenOptions {
-        title: String::from("egui-baseview hello world"),
-        size: Size::new(300.0, 110.0),
-        scale: WindowScalePolicy::SystemScaleFactor,
-        ..Default::default()
-    };
-
     let state = ();
 
     EguiWindow::open_blocking(
-        settings,
-        GraphicsConfig::default(),
+        EguiWindowSettings::new()
+            .with_tile("egui-baseview hello world")
+            .with_logical_size(Size::new(300.0, 110.0)),
         state,
         |_egui_ctx: &Context, _queue: &mut Queue, _state: &mut ()| {},
         |ui: &mut Ui, _queue: &mut Queue, _state: &mut ()| {

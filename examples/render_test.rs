@@ -1,6 +1,5 @@
-use baseview::{Size, WindowOpenOptions, WindowScalePolicy};
 use egui::Context;
-use egui_baseview::{EguiWindow, GraphicsConfig, Queue};
+use egui_baseview::{EguiWindow, EguiWindowSettings, Queue, baseview::Size};
 
 use std::collections::HashMap;
 
@@ -651,18 +650,12 @@ fn lerp_color_gamma(left: Color32, right: Color32, t: f32) -> Color32 {
 }
 
 fn main() {
-    let settings = WindowOpenOptions {
-        title: String::from("egui-baseview hello world"),
-        size: Size::new(1280.0, 720.0),
-        scale: WindowScalePolicy::SystemScaleFactor,
-        ..Default::default()
-    };
-
     let state = ColorTest::default();
 
     EguiWindow::open_blocking(
-        settings,
-        GraphicsConfig::default(),
+        EguiWindowSettings::new()
+            .with_tile("egui-baseview render test")
+            .with_logical_size(Size::new(1280.0, 720.0)),
         state,
         |_egui_ctx: &Context, _queue: &mut Queue, _state: &mut ColorTest| {},
         |ui: &mut Ui, _queue: &mut Queue, state: &mut ColorTest| {
