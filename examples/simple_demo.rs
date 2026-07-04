@@ -1,18 +1,17 @@
-use baseview::WindowOpenOptions;
-use baseview::dpi::LogicalSize;
+use baseview::dpi::{LogicalSize, Size};
 use egui::{CentralPanel, Context, Ui};
-use egui_baseview::{EguiWindow, GraphicsConfig, Queue};
+use egui_baseview::{EguiWindow, EguiWindowSettings, Queue};
 
 fn main() {
-    let settings = WindowOpenOptions::new()
-        .with_title("egui-baseview simple demo")
-        .with_size(LogicalSize::new(400.0, 200.0));
-
     let state = State::new();
 
     EguiWindow::open_blocking(
-        settings,
-        GraphicsConfig::default(),
+        EguiWindowSettings::new()
+            .with_tile("egui-baseview simple demo")
+            .with_size(Size::Logical(LogicalSize {
+                width: 400.0,
+                height: 200.0,
+            })),
         state,
         // Called once before the first frame. Allows you to do setup code and to
         // call `ctx.set_fonts()`. Optional.
@@ -20,7 +19,7 @@ fn main() {
         // Called before each frame. Here you should update the state of your
         // application and build the UI.
         |ui: &mut Ui, queue: &mut Queue, state: &mut State| {
-            CentralPanel::default().show_inside(ui, |ui| {
+            CentralPanel::default().show(ui, |ui| {
                 ui.heading("My Egui Application");
                 ui.horizontal(|ui| {
                     ui.label("Your name: ");

@@ -96,7 +96,7 @@ impl Renderer {
         let mut surf_config = SurfaceConfiguration {
             usage,
             format: self.render_state.target_format,
-            present_mode: self.config.wgpu_options.present_mode,
+            present_mode: self.config.wgpu_options.surface.present_mode,
             view_formats: vec![self.render_state.target_format],
             ..self
                 .surface
@@ -104,8 +104,11 @@ impl Renderer {
                 .expect("Unsupported surface")
         };
 
-        if let Some(desired_maximum_frame_latency) =
-            self.config.wgpu_options.desired_maximum_frame_latency
+        if let Some(desired_maximum_frame_latency) = self
+            .config
+            .wgpu_options
+            .surface
+            .desired_maximum_frame_latency
         {
             surf_config.desired_maximum_frame_latency = desired_maximum_frame_latency;
         }

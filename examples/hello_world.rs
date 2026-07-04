@@ -1,22 +1,21 @@
-use baseview::WindowOpenOptions;
-use baseview::dpi::LogicalSize;
+use baseview::dpi::{LogicalSize, Size};
 use egui::{CentralPanel, Context, Ui};
-use egui_baseview::{EguiWindow, GraphicsConfig, Queue};
+use egui_baseview::{EguiWindow, EguiWindowSettings, Queue};
 
 fn main() {
-    let settings = WindowOpenOptions::new()
-        .with_title("egui-baseview hello world")
-        .with_size(LogicalSize::new(300.0, 110.0));
-
     let state = ();
 
     EguiWindow::open_blocking(
-        settings,
-        GraphicsConfig::default(),
+        EguiWindowSettings::new()
+            .with_tile("egui-baseview hello world")
+            .with_size(Size::Logical(LogicalSize {
+                width: 300.0,
+                height: 110.0,
+            })),
         state,
         |_egui_ctx: &Context, _queue: &mut Queue, _state: &mut ()| {},
         |ui: &mut Ui, _queue: &mut Queue, _state: &mut ()| {
-            CentralPanel::default().show_inside(ui, |ui| {
+            CentralPanel::default().show(ui, |ui| {
                 ui.label("Hello World!");
             });
         },

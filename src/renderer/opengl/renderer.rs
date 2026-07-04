@@ -1,12 +1,15 @@
 use super::OpenGlError;
 use baseview::WindowContext;
 use baseview::dpi::PhysicalSize;
+use baseview::gl::GlConfig;
 use egui::FullOutput;
 use egui_glow::Painter;
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub struct GraphicsConfig {
+    pub gl_config: GlConfig,
+
     /// Controls whether to apply dithering to minimize banding artifacts.
     ///
     /// Dithering assumes an sRGB output and thus will apply noise to any input value that lies between
@@ -26,6 +29,7 @@ pub struct GraphicsConfig {
 impl Default for GraphicsConfig {
     fn default() -> Self {
         Self {
+            gl_config: GlConfig::default(),
             shader_version: None,
             dithering: true,
         }

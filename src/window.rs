@@ -5,7 +5,7 @@ use std::time::Instant;
 use baseview::dpi::{LogicalSize, Size};
 use baseview::{
     Event, EventStatus, Window, WindowContext, WindowHandle, WindowHandler, WindowOpenOptions,
-    WindowSize,
+    WindowScalePolicy, WindowSize,
 };
 use copypasta::ClipboardProvider;
 use egui::{Pos2, Rect, Rgba, ViewportCommand, pos2, vec2};
@@ -18,6 +18,59 @@ use crate::{GraphicsConfig, renderer::Renderer};
 use nice_plug_core::{nice_error as error, nice_warn as warn};
 #[cfg(all(feature = "tracing", not(feature = "nice-log")))]
 use tracing::{error, warn};
+
+#[derive(Debug, Clone)]
+pub struct EguiWindowSettings {
+    pub title: String,
+
+    /// The size of the window
+    pub size: Size,
+
+    /// The dpi scaling policy
+    pub scale_policy: WindowScalePolicy,
+
+    pub graphics: GraphicsConfig,
+}
+
+impl EguiWindowSettings {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_tile(mut self, title: impl Into<String>) -> Self {
+        self.title = title.into();
+        self
+    }
+
+    pub fn with_size(mut self, size: Size) -> Self {
+        self.size = size;
+        self
+    }
+
+    pub fn with_scale_policy(mut self, scale_policy: WindowScalePolicy) -> Self {
+        self.scale_policy = scale_policy;
+        self
+    }
+
+    pub fn with_graphics_config(mut self, config: GraphicsConfig) -> Self {
+        self.graphics = config;
+        self
+    }
+}
+
+impl Default for EguiWindowSettings {
+    fn default() -> Self {
+        Self {
+            title: String::new(),
+            size: Size::Logical(LogicalSize {
+                width: 300.0,
+                height: 200.0,
+            }),
+            scale_policy: WindowScalePolicy::default(),
+            graphics: GraphicsConfig::default(),
+        }
+    }
+}
 
 pub struct Queue<'a> {
     bg_color: Option<Rgba>,
@@ -56,18 +109,6 @@ impl<'a> Queue<'a> {
     /// Set how to handle capturing key events from the host.
     pub fn set_key_capture(&mut self, key_capture: KeyCapture) {
         self.key_capture = Some(key_capture);
-    }
-}
-
-struct OpenSettings {
-    title: String,
-}
-
-impl OpenSettings {
-    fn new(settings: &WindowOpenOptions) -> Self {
-        Self {
-            title: settings.title.clone(),
-        }
     }
 }
 
@@ -120,7 +161,7 @@ where
 {
     fn new<B>(
         window: WindowContext,
-        open_settings: OpenSettings,
+        title: String,
         graphics_config: GraphicsConfig,
         mut build: B,
         update: U,
@@ -146,7 +187,7 @@ where
 
         let viewport_info = egui::ViewportInfo {
             parent: None,
-            title: Some(open_settings.title),
+            title: Some(title),
             native_pixels_per_point: Some(size.scale_factor as f32),
             focused: Some(true),
             inner_rect: Some(screen_rect),
@@ -212,8 +253,7 @@ where
     ///   application and build the UI.
     pub fn open_parented<P, B>(
         parent: &P,
-        #[allow(unused_mut)] mut settings: WindowOpenOptions,
-        graphics_config: GraphicsConfig,
+        settings: EguiWindowSettings,
         state: State,
         build: B,
         update: U,
@@ -223,15 +263,23 @@ where
         B: FnMut(&egui::Context, &mut Queue, &mut State),
         B: 'static + Send,
     {
+        let options = WindowOpenOptions::new()
+            .with_title(settings.title.clone())
+            .with_size(settings.size)
+            .with_scale_policy(settings.scale_policy);
+
         #[cfg(feature = "opengl")]
-        if settings.gl_config.is_none() {
-            settings.gl_config = Some(Default::default());
-        }
+        let options = { options.with_gl_config(Some(settings.graphics.gl_config.clone())) };
 
-        let open_settings = OpenSettings::new(&settings);
-
-        Window::open_parented(parent, settings, move |window| -> EguiWindow<State, U> {
-            EguiWindow::new(window, open_settings, graphics_config, build, update, state)
+        Window::open_parented(parent, options, move |window| -> EguiWindow<State, U> {
+            EguiWindow::new(
+                window,
+                settings.title,
+                settings.graphics,
+                build,
+                update,
+                state,
+            )
         })
     }
 
@@ -243,25 +291,28 @@ where
     ///   call `ctx.set_fonts()`. Optional.
     /// * `update` - Called before each frame. Here you should update the state of your
     ///   application and build the UI.
-    pub fn open_blocking<B>(
-        #[allow(unused_mut)] mut settings: WindowOpenOptions,
-        graphics_config: GraphicsConfig,
-        state: State,
-        build: B,
-        update: U,
-    ) where
+    pub fn open_blocking<B>(settings: EguiWindowSettings, state: State, build: B, update: U)
+    where
         B: FnMut(&egui::Context, &mut Queue, &mut State),
         B: 'static + Send,
     {
+        let options = WindowOpenOptions::new()
+            .with_title(settings.title.clone())
+            .with_size(settings.size)
+            .with_scale_policy(settings.scale_policy);
+
         #[cfg(feature = "opengl")]
-        if settings.gl_config.is_none() {
-            settings.gl_config = Some(Default::default());
-        }
+        let options = { options.with_gl_config(Some(settings.graphics.gl_config.clone())) };
 
-        let open_settings = OpenSettings::new(&settings);
-
-        Window::open_blocking(settings, move |window| -> EguiWindow<State, U> {
-            EguiWindow::new(window, open_settings, graphics_config, build, update, state)
+        Window::open_blocking(options, move |window| -> EguiWindow<State, U> {
+            EguiWindow::new(
+                window,
+                settings.title,
+                settings.graphics,
+                build,
+                update,
+                state,
+            )
         })
     }
 

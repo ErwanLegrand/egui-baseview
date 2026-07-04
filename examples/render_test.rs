@@ -1,9 +1,7 @@
-use baseview::WindowOpenOptions;
+use baseview::dpi::{LogicalSize, Size};
 use egui::Context;
-use egui_baseview::{EguiWindow, GraphicsConfig, Queue};
-
-use baseview::dpi::LogicalSize;
 use egui::{TextureOptions, widgets::color_picker::show_color, *};
+use egui_baseview::{EguiWindow, EguiWindowSettings, Queue};
 use std::collections::HashMap;
 
 const GRADIENT_SIZE: Vec2 = vec2(256.0, 18.0);
@@ -651,15 +649,15 @@ fn lerp_color_gamma(left: Color32, right: Color32, t: f32) -> Color32 {
 }
 
 fn main() {
-    let settings = WindowOpenOptions::new()
-        .with_title("egui-baseview hello world")
-        .with_size(LogicalSize::new(1280.0, 720.0));
-
     let state = ColorTest::default();
 
     EguiWindow::open_blocking(
-        settings,
-        GraphicsConfig::default(),
+        EguiWindowSettings::new()
+            .with_tile("egui-baseview render test")
+            .with_size(Size::Logical(LogicalSize {
+                width: 1280.0,
+                height: 720.0,
+            })),
         state,
         |_egui_ctx: &Context, _queue: &mut Queue, _state: &mut ColorTest| {},
         |ui: &mut Ui, _queue: &mut Queue, state: &mut ColorTest| {
