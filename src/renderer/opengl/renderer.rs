@@ -79,6 +79,7 @@ impl Renderer {
 
     pub fn render(
         &mut self,
+        _window: &WindowContext,
         bg_color: egui::Rgba,
         physical_size: PhysicalSize<u32>,
         pixels_per_point: f32,

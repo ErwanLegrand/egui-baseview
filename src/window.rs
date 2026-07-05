@@ -389,6 +389,7 @@ where
         if do_repaint_now {
             let size = self.window.size();
             self.renderer.borrow_mut().render(
+                &self.window,
                 self.bg_color.get(),
                 size.physical,
                 size.scale_factor as f32,
