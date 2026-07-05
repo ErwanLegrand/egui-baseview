@@ -49,7 +49,6 @@ impl Renderer {
             context.make_current();
         }
 
-        #[allow(clippy::arc_with_non_send_sync)]
         let glow_context = Arc::new(unsafe {
             egui_glow::glow::Context::from_loader_function(|s| context.get_proc_address(s))
         });
