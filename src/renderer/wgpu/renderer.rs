@@ -12,7 +12,6 @@ use egui_wgpu::{
 };
 
 pub use egui_wgpu::WgpuConfiguration;
-use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
 #[derive(Debug, Clone)]
 pub struct GraphicsConfig {
@@ -44,6 +43,7 @@ impl Default for GraphicsConfig {
 
 pub struct Renderer {
     render_state: Arc<RenderState>,
+    instance: wgpu::Instance,
     surface: Surface<'static>,
     config: GraphicsConfig,
     msaa_texture_view: Option<TextureView>,
@@ -54,14 +54,11 @@ pub struct Renderer {
 
 impl Renderer {
     pub fn new(window: WindowContext, config: GraphicsConfig) -> Result<Self, WgpuError> {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle(
+            Box::new(window.platform_handle()),
+        ));
 
-        let surface = unsafe {
-            instance.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
-                raw_display_handle: window.display_handle().map(|w| w.as_raw()).ok(),
-                raw_window_handle: window.window_handle().map(|w| w.as_raw()).unwrap(),
-            })?
-        };
+        let surface = instance.create_surface(window.platform_handle()).unwrap();
 
         let msaa_samples = config.renderer_options.msaa_samples;
 
@@ -74,6 +71,7 @@ impl Renderer {
 
         Ok(Self {
             render_state: state,
+            instance,
             surface,
             config,
             msaa_texture_view: None,
@@ -221,17 +219,10 @@ impl Renderer {
 
         let Some(output_frame) = output_frame else {
             if recreate_surface {
-                let instance =
-                    wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-
-                self.surface = unsafe {
-                    instance
-                        .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
-                            raw_display_handle: window.display_handle().map(|w| w.as_raw()).ok(),
-                            raw_window_handle: window.window_handle().map(|w| w.as_raw()).unwrap(),
-                        })
-                        .unwrap()
-                };
+                self.surface = self
+                    .instance
+                    .create_surface(window.platform_handle())
+                    .unwrap();
             }
 
             self.configure_surface(self.width, self.height);
