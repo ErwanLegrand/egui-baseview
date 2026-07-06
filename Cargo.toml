@@ -23,7 +23,7 @@ nice-log = ["dep:nice-plug-core"]
 tracing = ["dep:tracing"]
 
 [dependencies]
-baseview = "0.2"
+baseview = { git = "https://github.com/RustAudio/baseview.git", rev = "09c56bd7bb5758175220ac3bfa9217fc6fd21bdd" }
 raw-window-handle = "0.6"
 egui = { version = "0.35.0", default-features = false, features = ["bytemuck"] }
 egui_glow = { version = "0.35.0", features = ["x11"], optional = true }

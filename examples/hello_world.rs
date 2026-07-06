@@ -1,6 +1,6 @@
 use baseview::dpi::{LogicalSize, Size};
 use egui::{CentralPanel, Context, Ui};
-use egui_baseview::{EguiWindow, EguiWindowSettings, Queue};
+use egui_baseview::{EguiWindow, EguiWindowSettings, ExtraOutputCommands};
 
 fn main() {
     let state = ();
@@ -13,8 +13,8 @@ fn main() {
                 height: 110.0,
             })),
         state,
-        |_egui_ctx: &Context, _queue: &mut Queue, _state: &mut ()| {},
-        |ui: &mut Ui, _queue: &mut Queue, _state: &mut ()| {
+        |_egui_ctx: &Context, _queue: &mut ExtraOutputCommands, _state: &mut ()| {},
+        |ui: &mut Ui, _queue: &mut ExtraOutputCommands, _state: &mut ()| {
             CentralPanel::default().show(ui, |ui| {
                 ui.label("Hello World!");
             });

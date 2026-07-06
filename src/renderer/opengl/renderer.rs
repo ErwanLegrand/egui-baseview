@@ -6,7 +6,7 @@ use egui::FullOutput;
 use egui_glow::Painter;
 use std::sync::Arc;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GraphicsConfig {
     pub gl_config: GlConfig,
 
