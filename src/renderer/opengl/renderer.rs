@@ -79,7 +79,7 @@ impl Renderer {
     pub fn render(
         &mut self,
         _window: &WindowContext,
-        bg_color: egui::Rgba,
+        clear_color: egui::Rgba,
         physical_size: PhysicalSize<u32>,
         pixels_per_point: f32,
         egui_ctx: &mut egui::Context,
@@ -103,8 +103,12 @@ impl Renderer {
 
         unsafe {
             use egui_glow::glow::HasContext as _;
-            self.glow_context
-                .clear_color(bg_color.r(), bg_color.g(), bg_color.b(), bg_color.a());
+            self.glow_context.clear_color(
+                clear_color.r(),
+                clear_color.g(),
+                clear_color.b(),
+                clear_color.a(),
+            );
             self.glow_context.clear(egui_glow::glow::COLOR_BUFFER_BIT);
         }
 

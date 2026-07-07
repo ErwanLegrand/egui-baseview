@@ -152,7 +152,7 @@ impl Renderer {
     pub fn render(
         &mut self,
         window: &baseview::WindowContext,
-        bg_color: egui::Rgba,
+        clear_color: egui::Rgba,
         physical_size: PhysicalSize<u32>,
         pixels_per_point: f32,
         egui_ctx: &mut egui::Context,
@@ -249,10 +249,10 @@ impl Renderer {
                     resolve_target,
                     ops: egui_wgpu::wgpu::Operations {
                         load: egui_wgpu::wgpu::LoadOp::Clear(Color {
-                            r: bg_color[0] as f64,
-                            g: bg_color[1] as f64,
-                            b: bg_color[2] as f64,
-                            a: bg_color[3] as f64,
+                            r: clear_color[0] as f64,
+                            g: clear_color[1] as f64,
+                            b: clear_color[2] as f64,
+                            a: clear_color[3] as f64,
                         }),
                         store: egui_wgpu::wgpu::StoreOp::Store,
                     },

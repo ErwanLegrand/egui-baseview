@@ -78,21 +78,21 @@ impl Default for EguiWindowSettings {
 
 /// Extra egui-baseview related output commands.
 pub struct ExtraOutputCommands {
-    bg_color: Option<Rgba>,
+    clear_color: Option<Rgba>,
     key_capture: Option<KeyCapture>,
 }
 
 impl ExtraOutputCommands {
     pub(crate) fn new() -> Self {
         Self {
-            bg_color: None,
+            clear_color: None,
             key_capture: None,
         }
     }
 
-    /// Set the background color.
-    pub fn bg_color(&mut self, bg_color: Rgba) {
-        self.bg_color = Some(bg_color);
+    /// Set the clear color of the renderer.
+    pub fn clear_color(&mut self, clear_color: Rgba) {
+        self.clear_color = Some(clear_color);
     }
 
     /// Set how to handle capturing key events from the host.
@@ -115,6 +115,21 @@ pub enum KeyCapture {
     IgnoreKeys(Vec<keyboard_types::Key>),
 }
 
+struct EguiWindowInner<State, U>
+where
+    State: 'static + Send,
+    U: FnMut(&mut egui::Ui, &mut ExtraOutputCommands, &mut State),
+    U: 'static + Send,
+{
+    user_state: State,
+    user_update: U,
+    egui_ctx: egui::Context,
+    clipboard_ctx: Option<copypasta::ClipboardContext>,
+    renderer: Renderer,
+    clear_color: Rgba,
+    key_capture: KeyCapture,
+}
+
 /// Handles an egui-baseview application
 pub struct EguiWindow<State, U>
 where
@@ -122,24 +137,15 @@ where
     U: FnMut(&mut egui::Ui, &mut ExtraOutputCommands, &mut State),
     U: 'static + Send,
 {
-    user_state: RefCell<State>,
-    user_update: RefCell<U>,
-
-    egui_ctx: RefCell<egui::Context>,
+    inner: RefCell<EguiWindowInner<State, U>>,
+    egui_input: RefCell<egui::RawInput>,
     viewport_id: egui::ViewportId,
     start_time: Instant,
-    egui_input: RefCell<egui::RawInput>,
-    scale_factor: f64,
+    scale_factor: Cell<f64>,
     pointer_logical_pos: Cell<Option<egui::Pos2>>,
     current_cursor_icon: Cell<baseview::MouseCursor>,
-
-    renderer: RefCell<Renderer>,
-
-    clipboard_ctx: RefCell<Option<copypasta::ClipboardContext>>,
-
-    bg_color: Cell<Rgba>,
     repaint_after: Cell<Option<Instant>>,
-    key_capture: RefCell<KeyCapture>,
+
     pub window: WindowContext,
 }
 
@@ -190,9 +196,9 @@ where
         };
         let _ = egui_input.viewports.insert(viewport_id, viewport_info);
 
-        let mut queue = ExtraOutputCommands::new();
+        let mut commands = ExtraOutputCommands::new();
 
-        (build)(&egui_ctx, &mut queue, &mut state);
+        (build)(&egui_ctx, &mut commands, &mut state);
 
         let clipboard_ctx = match copypasta::ClipboardContext::new() {
             Ok(clipboard_ctx) => Some(clipboard_ctx),
@@ -205,25 +211,23 @@ where
         let start_time = Instant::now();
 
         Self {
-            user_state: state.into(),
-            user_update: update.into(),
-
-            window,
-            egui_ctx: egui_ctx.into(),
+            inner: RefCell::new(EguiWindowInner {
+                user_state: state,
+                user_update: update,
+                egui_ctx,
+                clipboard_ctx,
+                renderer,
+                clear_color: commands.clear_color.unwrap_or(Rgba::BLACK),
+                key_capture: commands.key_capture.unwrap_or_default(),
+            }),
             viewport_id,
             start_time,
             egui_input: egui_input.into(),
             pointer_logical_pos: None.into(),
-            scale_factor,
             current_cursor_icon: baseview::MouseCursor::Default.into(),
-
-            renderer: renderer.into(),
-            bg_color: queue.bg_color.unwrap_or(Rgba::BLACK).into(),
-
-            clipboard_ctx: clipboard_ctx.into(),
-
+            scale_factor: scale_factor.into(),
             repaint_after: Some(start_time).into(),
-            key_capture: queue.key_capture.clone().unwrap_or_default().into(),
+            window,
         }
     }
 
@@ -324,18 +328,32 @@ where
             egui_input.take()
         };
 
-        //let mut repaint_requested = false;
-        let mut extra_commands = ExtraOutputCommands::new();
-
         let mut full_output = {
-            let egui_ctx = self.egui_ctx.borrow_mut();
-            egui_ctx.run_ui(egui_input, |ui| {
-                self.user_update.borrow_mut()(
-                    ui,
-                    &mut extra_commands,
-                    &mut self.user_state.borrow_mut(),
-                )
-            })
+            let mut extra_commands = ExtraOutputCommands::new();
+
+            let mut inner = self.inner.borrow_mut();
+            let EguiWindowInner {
+                user_state,
+                user_update,
+                egui_ctx,
+                clipboard_ctx: _,
+                renderer: _,
+                clear_color,
+                key_capture,
+            } = &mut *inner;
+
+            let output = egui_ctx.run_ui(egui_input, |ui| {
+                user_update(ui, &mut extra_commands, user_state)
+            });
+
+            if let Some(c) = extra_commands.clear_color.take() {
+                *clear_color = c;
+            }
+            if let Some(k) = extra_commands.key_capture.take() {
+                *key_capture = k;
+            }
+
+            output
         };
 
         // Prevent data from being allocated every frame by storing this
@@ -363,45 +381,58 @@ where
             }
         }
 
-        let now = Instant::now();
-        let do_repaint_now = if let Some(t) = self.repaint_after.get() {
-            now >= t || viewport_output.repaint_delay.is_zero()
-        } else {
-            viewport_output.repaint_delay.is_zero()
-        };
+        {
+            let mut inner = self.inner.borrow_mut();
+            let EguiWindowInner {
+                user_state: _,
+                user_update: _,
+                egui_ctx,
+                clipboard_ctx,
+                renderer,
+                clear_color: bg_color,
+                key_capture: _,
+            } = &mut *inner;
 
-        if do_repaint_now {
-            let size = self.window.size();
-            self.renderer.borrow_mut().render(
-                &self.window,
-                self.bg_color.get(),
-                size.physical,
-                size.scale_factor as f32,
-                &mut self.egui_ctx.borrow_mut(),
-                &mut full_output,
-            );
+            let now = Instant::now();
+            let do_repaint_now = if let Some(t) = self.repaint_after.get() {
+                now >= t || viewport_output.repaint_delay.is_zero()
+            } else {
+                viewport_output.repaint_delay.is_zero()
+            };
 
-            self.repaint_after.set(None);
-        } else if let Some(repaint_after) = now.checked_add(viewport_output.repaint_delay) {
-            // Schedule to repaint after the requested time has elapsed.
-            self.repaint_after.set(Some(repaint_after));
-        }
+            if do_repaint_now {
+                let size = self.window.size();
+                renderer.render(
+                    &self.window,
+                    *bg_color,
+                    size.physical,
+                    size.scale_factor as f32,
+                    egui_ctx,
+                    &mut full_output,
+                );
 
-        for command in full_output.platform_output.commands {
-            match command {
-                egui::OutputCommand::CopyText(text) => {
-                    if let Some(clipboard_ctx) = self.clipboard_ctx.borrow_mut().as_mut()
-                        && let Err(err) = clipboard_ctx.set_contents(text)
-                    {
-                        error!("Copy/Cut error: {}", err);
+                self.repaint_after.set(None);
+            } else if let Some(t) = now.checked_add(viewport_output.repaint_delay) {
+                // Schedule to repaint after the requested time has elapsed.
+                self.repaint_after.set(Some(t));
+            }
+
+            for command in full_output.platform_output.commands {
+                match command {
+                    egui::OutputCommand::CopyText(text) => {
+                        if let Some(clipboard_ctx) = clipboard_ctx.as_mut()
+                            && let Err(err) = clipboard_ctx.set_contents(text)
+                        {
+                            error!("Copy/Cut error: {}", err);
+                        }
                     }
-                }
-                egui::OutputCommand::CopyImage(_) => {
-                    warn!("Copying images is not supported in egui_baseview.");
-                }
-                egui::OutputCommand::OpenUrl(open_url) => {
-                    if let Err(err) = open::that_detached(&open_url.url) {
-                        error!("Open error: {}", err);
+                    egui::OutputCommand::CopyImage(_) => {
+                        warn!("Copying images is not supported in egui_baseview.");
+                    }
+                    egui::OutputCommand::OpenUrl(open_url) => {
+                        if let Err(err) = open::that_detached(&open_url.url) {
+                            error!("Open error: {}", err);
+                        }
                     }
                 }
             }
@@ -440,6 +471,8 @@ where
 
         // Schedule to repaint on the next frame.
         self.repaint_after.set(Some(Instant::now()));
+
+        self.scale_factor.set(new_size.scale_factor);
     }
 
     fn on_event(&self, event: Event) -> EventStatus {
@@ -449,7 +482,7 @@ where
         // Automatically on click. Request focus explicitly before forwarding the event.
         if matches!(
             event,
-            Event::Mouse(baseview::MouseEvent::ButtonPressed { .. })
+            baseview::Event::Mouse(baseview::MouseEvent::ButtonPressed { .. })
         ) && !self.window.has_focus()
         {
             self.window.focus();
@@ -463,7 +496,8 @@ where
                 } => {
                     self.update_modifiers(modifiers);
 
-                    let logical_pos: LogicalPosition<f32> = position.to_logical(self.scale_factor);
+                    let logical_pos: LogicalPosition<f32> =
+                        position.to_logical(self.scale_factor.get());
                     let pos = pos2(logical_pos.x, logical_pos.y);
 
                     self.pointer_logical_pos.set(Some(pos));
@@ -597,7 +631,8 @@ where
                     } else if is_copy_command(egui_input.modifiers, event.code) {
                         egui_input.events.push(egui::Event::Copy);
                     } else if is_paste_command(egui_input.modifiers, event.code) {
-                        if let Some(clipboard_ctx) = self.clipboard_ctx.borrow_mut().as_mut() {
+                        if let Some(clipboard_ctx) = self.inner.borrow_mut().clipboard_ctx.as_mut()
+                        {
                             match clipboard_ctx.get_contents() {
                                 Ok(contents) => egui_input.events.push(egui::Event::Text(contents)),
                                 Err(err) => {
@@ -613,7 +648,7 @@ where
                     }
                 }
 
-                match &*self.key_capture.borrow() {
+                match &self.inner.borrow().key_capture {
                     KeyCapture::CaptureAll => {}
                     KeyCapture::IgnoreAll => return_status = EventStatus::Ignored,
                     KeyCapture::CaptureKeys(keys) => {
@@ -657,7 +692,7 @@ where
         // This allows DAW shortcuts (spacebar, etc.) to pass through when no text field is focused
         match &event {
             baseview::Event::Keyboard(_) => {
-                let egui_ctx = self.egui_ctx.borrow();
+                let egui_ctx = &self.inner.borrow().egui_ctx;
                 if return_status == EventStatus::Captured && !egui_ctx.egui_wants_keyboard_input() {
                     EventStatus::Ignored
                 } else {
@@ -665,7 +700,7 @@ where
                 }
             }
             baseview::Event::Mouse(_) => {
-                let egui_ctx = self.egui_ctx.borrow();
+                let egui_ctx = &self.inner.borrow().egui_ctx;
                 if egui_ctx.egui_is_using_pointer() || egui_ctx.egui_wants_pointer_input() {
                     EventStatus::Captured
                 } else {

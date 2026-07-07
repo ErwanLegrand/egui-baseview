@@ -659,8 +659,8 @@ fn main() {
                 height: 720.0,
             })),
         state,
-        |_egui_ctx: &Context, _queue: &mut ExtraOutputCommands, _state: &mut ColorTest| {},
-        |ui: &mut Ui, _queue: &mut ExtraOutputCommands, state: &mut ColorTest| {
+        |_egui_ctx: &Context, _commands: &mut ExtraOutputCommands, _state: &mut ColorTest| {},
+        |ui: &mut Ui, _commands: &mut ExtraOutputCommands, state: &mut ColorTest| {
             egui::Window::new("rendering test")
                 .scroll(true)
                 .show(ui.ctx(), |ui| {

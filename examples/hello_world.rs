@@ -13,8 +13,8 @@ fn main() {
                 height: 110.0,
             })),
         state,
-        |_egui_ctx: &Context, _queue: &mut ExtraOutputCommands, _state: &mut ()| {},
-        |ui: &mut Ui, _queue: &mut ExtraOutputCommands, _state: &mut ()| {
+        |_egui_ctx: &Context, _commands: &mut ExtraOutputCommands, _state: &mut ()| {},
+        |ui: &mut Ui, _commands: &mut ExtraOutputCommands, _state: &mut ()| {
             CentralPanel::default().show(ui, |ui| {
                 ui.label("Hello World!");
             });
