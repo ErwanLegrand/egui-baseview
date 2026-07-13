@@ -1,11 +1,12 @@
-use baseview::{PhySize, Window, gl::GlConfig};
+use super::OpenGlError;
+use baseview::WindowContext;
+use baseview::dpi::PhysicalSize;
+use baseview::gl::GlConfig;
 use egui::FullOutput;
 use egui_glow::Painter;
 use std::sync::Arc;
 
-use super::OpenGlError;
-
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GraphicsConfig {
     pub gl_config: GlConfig,
 
@@ -38,16 +39,16 @@ impl Default for GraphicsConfig {
 pub struct Renderer {
     glow_context: Arc<egui_glow::glow::Context>,
     painter: Painter,
+    pub window: WindowContext,
 }
 
 impl Renderer {
-    pub fn new(window: &Window, config: GraphicsConfig) -> Result<Self, OpenGlError> {
+    pub fn new(window: WindowContext, config: GraphicsConfig) -> Result<Self, OpenGlError> {
         let context = window.gl_context().ok_or(OpenGlError::NoContext)?;
         unsafe {
             context.make_current();
         }
 
-        #[allow(clippy::arc_with_non_send_sync)]
         let glow_context = Arc::new(unsafe {
             egui_glow::glow::Context::from_loader_function(|s| context.get_proc_address(s))
         });
@@ -65,6 +66,7 @@ impl Renderer {
         }
 
         Ok(Self {
+            window,
             glow_context,
             painter,
         })
@@ -76,14 +78,14 @@ impl Renderer {
 
     pub fn render(
         &mut self,
-        window: &Window,
-        bg_color: egui::Rgba,
-        physical_size: PhySize,
+        _window: &WindowContext,
+        clear_color: egui::Rgba,
+        physical_size: PhysicalSize<u32>,
         pixels_per_point: f32,
         egui_ctx: &mut egui::Context,
         full_output: &mut FullOutput,
     ) {
-        let PhySize {
+        let PhysicalSize {
             width: canvas_width,
             height: canvas_height,
         } = physical_size;
@@ -91,7 +93,8 @@ impl Renderer {
         let shapes = std::mem::take(&mut full_output.shapes);
         let textures_delta = &mut full_output.textures_delta;
 
-        let context = window
+        let context = self
+            .window
             .gl_context()
             .expect("failed to get baseview gl context");
         unsafe {
@@ -100,8 +103,12 @@ impl Renderer {
 
         unsafe {
             use egui_glow::glow::HasContext as _;
-            self.glow_context
-                .clear_color(bg_color.r(), bg_color.g(), bg_color.b(), bg_color.a());
+            self.glow_context.clear_color(
+                clear_color.r(),
+                clear_color.g(),
+                clear_color.b(),
+                clear_color.a(),
+            );
             self.glow_context.clear(egui_glow::glow::COLOR_BUFFER_BIT);
         }
 

@@ -1,10 +1,6 @@
-use std::{
-    num::{NonZeroIsize, NonZeroU32},
-    ptr::NonNull,
-    sync::Arc,
-};
+use std::sync::Arc;
 
-use baseview::{PhySize, Window};
+use baseview::{WindowContext, dpi::PhysicalSize};
 use egui::FullOutput;
 use egui_wgpu::{
     RenderState, RendererOptions, ScreenDescriptor, WgpuError,
@@ -47,6 +43,7 @@ impl Default for GraphicsConfig {
 
 pub struct Renderer {
     render_state: Arc<RenderState>,
+    instance: wgpu::Instance,
     surface: Surface<'static>,
     config: GraphicsConfig,
     msaa_texture_view: Option<TextureView>,
@@ -56,11 +53,12 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub fn new(window: &Window, config: GraphicsConfig) -> Result<Self, WgpuError> {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+    pub fn new(window: WindowContext, config: GraphicsConfig) -> Result<Self, WgpuError> {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle(
+            Box::new(window.platform_handle()),
+        ));
 
-        let target = baseview_window_to_surface_target(window);
-        let surface = unsafe { instance.create_surface_unsafe(target) }.unwrap();
+        let surface = instance.create_surface(window.platform_handle()).unwrap();
 
         let msaa_samples = config.renderer_options.msaa_samples;
 
@@ -73,6 +71,7 @@ impl Renderer {
 
         Ok(Self {
             render_state: state,
+            instance,
             surface,
             config,
             msaa_texture_view: None,
@@ -152,18 +151,13 @@ impl Renderer {
 
     pub fn render(
         &mut self,
-        window: &baseview::Window<'_>,
-        bg_color: egui::Rgba,
-        physical_size: PhySize,
+        window: &baseview::WindowContext,
+        clear_color: egui::Rgba,
+        physical_size: PhysicalSize<u32>,
         pixels_per_point: f32,
         egui_ctx: &mut egui::Context,
         full_output: &mut FullOutput,
     ) {
-        let PhySize {
-            width: canvas_width,
-            height: canvas_height,
-        } = physical_size;
-
         let shapes = std::mem::take(&mut full_output.shapes);
 
         let clipped_primitives = egui_ctx.tessellate(shapes, pixels_per_point);
@@ -176,7 +170,7 @@ impl Renderer {
                 });
 
         let screen_descriptor = ScreenDescriptor {
-            size_in_pixels: [canvas_width, canvas_height],
+            size_in_pixels: [physical_size.width, physical_size.height],
             pixels_per_point,
         };
 
@@ -200,11 +194,11 @@ impl Renderer {
             )
         };
 
-        if self.width != canvas_width
-            || self.height != canvas_height
+        if self.width != physical_size.width
+            || self.height != physical_size.height
             || self.msaa_texture_view.is_none()
         {
-            self.resize_and_generate_msaa_view(canvas_width, canvas_height);
+            self.resize_and_generate_msaa_view(physical_size.width, physical_size.height);
         }
 
         let mut recreate_surface = false;
@@ -225,10 +219,10 @@ impl Renderer {
 
         let Some(output_frame) = output_frame else {
             if recreate_surface {
-                let target = baseview_window_to_surface_target(window);
-                let instance =
-                    wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-                self.surface = unsafe { instance.create_surface_unsafe(target) }.unwrap();
+                self.surface = self
+                    .instance
+                    .create_surface(window.platform_handle())
+                    .unwrap();
             }
 
             self.configure_surface(self.width, self.height);
@@ -255,10 +249,10 @@ impl Renderer {
                     resolve_target,
                     ops: egui_wgpu::wgpu::Operations {
                         load: egui_wgpu::wgpu::LoadOp::Clear(Color {
-                            r: bg_color[0] as f64,
-                            g: bg_color[1] as f64,
-                            b: bg_color[2] as f64,
-                            a: bg_color[3] as f64,
+                            r: clear_color[0] as f64,
+                            g: clear_color[1] as f64,
+                            b: clear_color[2] as f64,
+                            a: clear_color[3] as f64,
                         }),
                         store: egui_wgpu::wgpu::StoreOp::Store,
                     },
@@ -293,76 +287,5 @@ impl Renderer {
             .submit(user_cmd_bufs.into_iter().chain([encoded]));
 
         output_frame.present();
-    }
-}
-
-/// WGPU uses raw_window_handle v6, but baseview uses raw_window_handle v5, so manually convert it.
-fn baseview_window_to_surface_target(window: &baseview::Window<'_>) -> wgpu::SurfaceTargetUnsafe {
-    use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
-
-    let raw_display_handle = window.raw_display_handle();
-    let raw_window_handle = window.raw_window_handle();
-
-    wgpu::SurfaceTargetUnsafe::RawHandle {
-        raw_display_handle: match raw_display_handle {
-            raw_window_handle::RawDisplayHandle::AppKit(_) => {
-                Some(raw_window_handle_06::RawDisplayHandle::AppKit(
-                    raw_window_handle_06::AppKitDisplayHandle::new(),
-                ))
-            }
-            raw_window_handle::RawDisplayHandle::Xlib(handle) => {
-                Some(raw_window_handle_06::RawDisplayHandle::Xlib(
-                    raw_window_handle_06::XlibDisplayHandle::new(
-                        NonNull::new(handle.display),
-                        handle.screen,
-                    ),
-                ))
-            }
-            raw_window_handle::RawDisplayHandle::Xcb(handle) => {
-                Some(raw_window_handle_06::RawDisplayHandle::Xcb(
-                    raw_window_handle_06::XcbDisplayHandle::new(
-                        NonNull::new(handle.connection),
-                        handle.screen,
-                    ),
-                ))
-            }
-            raw_window_handle::RawDisplayHandle::Windows(_) => {
-                Some(raw_window_handle_06::RawDisplayHandle::Windows(
-                    raw_window_handle_06::WindowsDisplayHandle::new(),
-                ))
-            }
-            _ => todo!(),
-        },
-        raw_window_handle: match raw_window_handle {
-            raw_window_handle::RawWindowHandle::AppKit(handle) => {
-                raw_window_handle_06::RawWindowHandle::AppKit(
-                    raw_window_handle_06::AppKitWindowHandle::new(
-                        NonNull::new(handle.ns_view).unwrap(),
-                    ),
-                )
-            }
-            raw_window_handle::RawWindowHandle::Xlib(handle) => {
-                raw_window_handle_06::RawWindowHandle::Xlib(
-                    raw_window_handle_06::XlibWindowHandle::new(handle.window),
-                )
-            }
-            raw_window_handle::RawWindowHandle::Xcb(handle) => {
-                raw_window_handle_06::RawWindowHandle::Xcb(
-                    raw_window_handle_06::XcbWindowHandle::new(
-                        NonZeroU32::new(handle.window).unwrap(),
-                    ),
-                )
-            }
-            raw_window_handle::RawWindowHandle::Win32(handle) => {
-                let mut raw_handle = raw_window_handle_06::Win32WindowHandle::new(
-                    NonZeroIsize::new(handle.hwnd as isize).unwrap(),
-                );
-
-                raw_handle.hinstance = NonZeroIsize::new(handle.hinstance as isize);
-
-                raw_window_handle_06::RawWindowHandle::Win32(raw_handle)
-            }
-            _ => todo!(),
-        },
     }
 }

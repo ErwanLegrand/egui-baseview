@@ -1,9 +1,8 @@
+use baseview::dpi::{LogicalSize, Size};
 use egui::Context;
-use egui_baseview::{EguiWindow, EguiWindowSettings, Queue, baseview::Size};
-
+use egui::{FullOutput, TextureOptions, widgets::color_picker::show_color, *};
+use egui_baseview::{EguiWindow, EguiWindowSettings, ExtraOutputCommands};
 use std::collections::HashMap;
-
-use egui::{TextureOptions, widgets::color_picker::show_color, *};
 
 const GRADIENT_SIZE: Vec2 = vec2(256.0, 18.0);
 
@@ -655,10 +654,14 @@ fn main() {
     EguiWindow::open_blocking(
         EguiWindowSettings::new()
             .with_tile("egui-baseview render test")
-            .with_logical_size(Size::new(1280.0, 720.0)),
+            .with_size(Size::Logical(LogicalSize {
+                width: 1280.0,
+                height: 720.0,
+            })),
         state,
-        |_egui_ctx: &Context, _queue: &mut Queue, _state: &mut ColorTest| {},
-        |ui: &mut Ui, _queue: &mut Queue, state: &mut ColorTest| {
+        |_egui_ctx: &Context, _commands: &mut ExtraOutputCommands, _state: &mut ColorTest| {},
+        |_output: &FullOutput, _viewport_output: &ViewportOutput, _state: &mut ColorTest| {},
+        |ui: &mut Ui, _commands: &mut ExtraOutputCommands, state: &mut ColorTest| {
             egui::Window::new("rendering test")
                 .scroll(true)
                 .show(ui.ctx(), |ui| {

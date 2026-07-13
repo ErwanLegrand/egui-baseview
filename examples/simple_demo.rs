@@ -1,5 +1,6 @@
-use egui::{CentralPanel, Context, Ui};
-use egui_baseview::{EguiWindow, EguiWindowSettings, Queue, baseview::Size};
+use baseview::dpi::{LogicalSize, Size};
+use egui::{CentralPanel, Context, FullOutput, Ui, ViewportOutput};
+use egui_baseview::{EguiWindow, EguiWindowSettings, ExtraOutputCommands};
 
 fn main() {
     let state = State::new();
@@ -7,14 +8,21 @@ fn main() {
     EguiWindow::open_blocking(
         EguiWindowSettings::new()
             .with_tile("egui-baseview simple demo")
-            .with_logical_size(Size::new(400.0, 200.0)),
+            .with_size(Size::Logical(LogicalSize {
+                width: 400.0,
+                height: 200.0,
+            })),
         state,
         // Called once before the first frame. Allows you to do setup code and to
         // call `ctx.set_fonts()`. Optional.
-        |_egui_ctx: &Context, _queue: &mut Queue, _state: &mut State| {},
+        |_egui_ctx: &Context, _commands: &mut ExtraOutputCommands, _state: &mut State| {},
+        // Called after each `update`. Can be used to read egui's output commands to
+        // perform actions, i.e. asking the host to resize the window if a command to
+        // resize the window is present. Optional.
+        |_output: &FullOutput, _viewport_output: &ViewportOutput, _state: &mut State| {},
         // Called before each frame. Here you should update the state of your
         // application and build the UI.
-        |ui: &mut Ui, queue: &mut Queue, state: &mut State| {
+        |ui: &mut Ui, _commands: &mut ExtraOutputCommands, state: &mut State| {
             CentralPanel::default().show(ui, |ui| {
                 ui.heading("My Egui Application");
                 ui.horizontal(|ui| {
@@ -27,7 +35,7 @@ fn main() {
                 }
                 ui.label(format!("Hello '{}', age {}", state.name, state.age));
                 if ui.button("close window").clicked() {
-                    queue.close_window();
+                    ui.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
 
                 ui.hyperlink_to("free crouton", "https://crouton.net");
