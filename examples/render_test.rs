@@ -1,6 +1,6 @@
 use baseview::dpi::{LogicalSize, Size};
 use egui::Context;
-use egui::{TextureOptions, widgets::color_picker::show_color, *};
+use egui::{FullOutput, TextureOptions, widgets::color_picker::show_color, *};
 use egui_baseview::{EguiWindow, EguiWindowSettings, ExtraOutputCommands};
 use std::collections::HashMap;
 
@@ -660,6 +660,7 @@ fn main() {
             })),
         state,
         |_egui_ctx: &Context, _commands: &mut ExtraOutputCommands, _state: &mut ColorTest| {},
+        |_output: &FullOutput, _viewport_output: &ViewportOutput, _state: &mut ColorTest| {},
         |ui: &mut Ui, _commands: &mut ExtraOutputCommands, state: &mut ColorTest| {
             egui::Window::new("rendering test")
                 .scroll(true)

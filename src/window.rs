@@ -7,7 +7,7 @@ use baseview::{
     WindowScalePolicy, WindowSize,
 };
 use copypasta::ClipboardProvider;
-use egui::{Pos2, Rect, Rgba, ViewportCommand, pos2, vec2};
+use egui::{FullOutput, Pos2, Rect, Rgba, ViewportCommand, ViewportOutput, pos2, vec2};
 use keyboard_types::Modifiers;
 use raw_window_handle::HasWindowHandle;
 
@@ -44,14 +44,14 @@ impl EguiWindowSettings {
     }
 
     #[inline]
-    pub fn with_size(mut self, size: Size) -> Self {
-        self.size = size;
+    pub fn with_size(mut self, size: impl Into<Size>) -> Self {
+        self.size = size.into();
         self
     }
 
     #[inline]
-    pub fn with_scale_policy(mut self, scale_policy: WindowScalePolicy) -> Self {
-        self.scale_policy = scale_policy;
+    pub fn with_scale_policy(mut self, scale_policy: impl Into<WindowScalePolicy>) -> Self {
+        self.scale_policy = scale_policy.into();
         self
     }
 
@@ -115,14 +115,17 @@ pub enum KeyCapture {
     IgnoreKeys(Vec<keyboard_types::Key>),
 }
 
-struct EguiWindowInner<State, U>
+struct EguiWindowInner<State, U, O>
 where
     State: 'static + Send,
     U: FnMut(&mut egui::Ui, &mut ExtraOutputCommands, &mut State),
     U: 'static + Send,
+    O: FnMut(&FullOutput, &ViewportOutput, &mut State),
+    O: 'static + Send,
 {
     user_state: State,
     user_update: U,
+    user_output: O,
     egui_ctx: egui::Context,
     clipboard_ctx: Option<copypasta::ClipboardContext>,
     renderer: Renderer,
@@ -131,13 +134,15 @@ where
 }
 
 /// Handles an egui-baseview application
-pub struct EguiWindow<State, U>
+pub struct EguiWindow<State, U, O>
 where
     State: 'static + Send,
     U: FnMut(&mut egui::Ui, &mut ExtraOutputCommands, &mut State),
     U: 'static + Send,
+    O: FnMut(&FullOutput, &ViewportOutput, &mut State),
+    O: 'static + Send,
 {
-    inner: RefCell<EguiWindowInner<State, U>>,
+    inner: RefCell<EguiWindowInner<State, U, O>>,
     egui_input: RefCell<egui::RawInput>,
     viewport_id: egui::ViewportId,
     start_time: Instant,
@@ -149,20 +154,23 @@ where
     pub window: WindowContext,
 }
 
-impl<State, U> EguiWindow<State, U>
+impl<State, U, O> EguiWindow<State, U, O>
 where
     State: 'static + Send,
     U: FnMut(&mut egui::Ui, &mut ExtraOutputCommands, &mut State),
     U: 'static + Send,
+    O: FnMut(&FullOutput, &ViewportOutput, &mut State),
+    O: 'static + Send,
 {
     fn new<B>(
         window: WindowContext,
         title: String,
         graphics_config: GraphicsConfig,
         mut build: B,
+        output: O,
         update: U,
         mut state: State,
-    ) -> EguiWindow<State, U>
+    ) -> EguiWindow<State, U, O>
     where
         B: FnMut(&egui::Context, &mut ExtraOutputCommands, &mut State),
         B: 'static + Send,
@@ -214,6 +222,7 @@ where
             inner: RefCell::new(EguiWindowInner {
                 user_state: state,
                 user_update: update,
+                user_output: output,
                 egui_ctx,
                 clipboard_ctx,
                 renderer,
@@ -238,6 +247,9 @@ where
     /// * `state` - The initial state of your application.
     /// * `build` - Called once before the first frame. Allows you to do setup code and to
     ///   call `ctx.set_fonts()`. Optional.
+    /// * `output` - Called after each `update`. Can be used to read egui's output commands to
+    ///   perform actions, i.e. asking the host to resize the window if a command to resize
+    ///   the window is present. Optional.
     /// * `update` - Called before each frame. Here you should update the state of your
     ///   application and build the UI.
     pub fn open_parented<P, B>(
@@ -245,6 +257,7 @@ where
         settings: EguiWindowSettings,
         state: State,
         build: B,
+        output: O,
         update: U,
     ) -> WindowHandle
     where
@@ -260,12 +273,13 @@ where
         #[cfg(feature = "opengl")]
         let options = { options.with_gl_config(Some(settings.graphics.gl_config.clone())) };
 
-        Window::open_parented(parent, options, move |window| -> EguiWindow<State, U> {
+        Window::open_parented(parent, options, move |window| -> EguiWindow<State, U, O> {
             EguiWindow::new(
                 window,
                 settings.title,
                 settings.graphics,
                 build,
+                output,
                 update,
                 state,
             )
@@ -278,10 +292,18 @@ where
     /// * `state` - The initial state of your application.
     /// * `build` - Called once before the first frame. Allows you to do setup code and to
     ///   call `ctx.set_fonts()`. Optional.
+    /// * `output` - Called after each `update`. Can be used to read egui's output commands to
+    ///   perform actions, i.e. asking the host to resize the window if a command to resize
+    ///   the window is present. Optional.
     /// * `update` - Called before each frame. Here you should update the state of your
     ///   application and build the UI.
-    pub fn open_blocking<B>(settings: EguiWindowSettings, state: State, build: B, update: U)
-    where
+    pub fn open_blocking<B>(
+        settings: EguiWindowSettings,
+        state: State,
+        build: B,
+        output: O,
+        update: U,
+    ) where
         B: FnMut(&egui::Context, &mut ExtraOutputCommands, &mut State),
         B: 'static + Send,
     {
@@ -293,12 +315,13 @@ where
         #[cfg(feature = "opengl")]
         let options = { options.with_gl_config(Some(settings.graphics.gl_config.clone())) };
 
-        Window::open_blocking(options, move |window| -> EguiWindow<State, U> {
+        Window::open_blocking(options, move |window| -> EguiWindow<State, U, O> {
             EguiWindow::new(
                 window,
                 settings.title,
                 settings.graphics,
                 build,
+                output,
                 update,
                 state,
             )
@@ -314,11 +337,13 @@ where
     }
 }
 
-impl<State, U> WindowHandler for EguiWindow<State, U>
+impl<State, U, O> WindowHandler for EguiWindow<State, U, O>
 where
     State: 'static + Send,
     U: FnMut(&mut egui::Ui, &mut ExtraOutputCommands, &mut State),
     U: 'static + Send,
+    O: FnMut(&FullOutput, &ViewportOutput, &mut State),
+    O: 'static + Send,
 {
     fn on_frame(&self) {
         let egui_input = {
@@ -335,6 +360,7 @@ where
             let EguiWindowInner {
                 user_state,
                 user_update,
+                user_output,
                 egui_ctx,
                 clipboard_ctx: _,
                 renderer: _,
@@ -353,11 +379,12 @@ where
                 *key_capture = k;
             }
 
+            if let Some(viewport_output) = output.viewport_output.get(&self.viewport_id) {
+                user_output(&output, viewport_output, user_state);
+            }
+
             output
         };
-
-        // Prevent data from being allocated every frame by storing this
-        // in a member field.
 
         let Some(viewport_output) = full_output.viewport_output.get(&self.viewport_id) else {
             // The main window was closed by egui.
@@ -386,6 +413,7 @@ where
             let EguiWindowInner {
                 user_state: _,
                 user_update: _,
+                user_output: _,
                 egui_ctx,
                 clipboard_ctx,
                 renderer,
@@ -480,6 +508,8 @@ where
 
         // Parent/embedded windows do not always gain keyboard focus
         // Automatically on click. Request focus explicitly before forwarding the event.
+        //
+        // TODO: Check if this is still necessary.
         if matches!(
             event,
             baseview::Event::Mouse(baseview::MouseEvent::ButtonPressed { .. })

@@ -1,5 +1,5 @@
 use baseview::dpi::{LogicalSize, Size};
-use egui::{CentralPanel, Context, Ui};
+use egui::{CentralPanel, Context, FullOutput, Ui, ViewportOutput};
 use egui_baseview::{EguiWindow, EguiWindowSettings, ExtraOutputCommands};
 
 fn main() {
@@ -16,6 +16,10 @@ fn main() {
         // Called once before the first frame. Allows you to do setup code and to
         // call `ctx.set_fonts()`. Optional.
         |_egui_ctx: &Context, _commands: &mut ExtraOutputCommands, _state: &mut State| {},
+        // Called after each `update`. Can be used to read egui's output commands to
+        // perform actions, i.e. asking the host to resize the window if a command to
+        // resize the window is present. Optional.
+        |_output: &FullOutput, _viewport_output: &ViewportOutput, _state: &mut State| {},
         // Called before each frame. Here you should update the state of your
         // application and build the UI.
         |ui: &mut Ui, _commands: &mut ExtraOutputCommands, state: &mut State| {

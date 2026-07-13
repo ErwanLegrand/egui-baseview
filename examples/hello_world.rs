@@ -1,5 +1,5 @@
 use baseview::dpi::{LogicalSize, Size};
-use egui::{CentralPanel, Context, Ui};
+use egui::{CentralPanel, Context, FullOutput, Ui, ViewportOutput};
 use egui_baseview::{EguiWindow, EguiWindowSettings, ExtraOutputCommands};
 
 fn main() {
@@ -14,6 +14,7 @@ fn main() {
             })),
         state,
         |_egui_ctx: &Context, _commands: &mut ExtraOutputCommands, _state: &mut ()| {},
+        |_output: &FullOutput, _viewport_output: &ViewportOutput, _state: &mut ()| {},
         |ui: &mut Ui, _commands: &mut ExtraOutputCommands, _state: &mut ()| {
             CentralPanel::default().show(ui, |ui| {
                 ui.label("Hello World!");
