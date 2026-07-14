@@ -13,9 +13,9 @@ use raw_window_handle::HasWindowHandle;
 
 use crate::{GraphicsConfig, renderer::Renderer};
 
-#[cfg(feature = "nice-log")]
-use nice_plug_core::{nice_error as error, nice_warn as warn};
-#[cfg(all(feature = "tracing", not(feature = "nice-log")))]
+#[cfg(all(feature = "log", not(feature = "tracing")))]
+use log::{error, warn};
+#[cfg(feature = "tracing")]
 use tracing::{error, warn};
 
 #[derive(Debug, Clone)]
@@ -177,6 +177,7 @@ where
     {
         let renderer = Renderer::new(window.clone(), graphics_config).unwrap_or_else(|err| {
             // TODO: better error log and not panicking, but that's gonna require baseview changes
+            #[cfg(any(feature = "tracing", feature = "log"))]
             error!("oops! the gpu backend couldn't initialize! \n {err}");
             panic!("gpu backend failed to initialize: \n {err}")
         });
@@ -211,7 +212,12 @@ where
         let clipboard_ctx = match copypasta::ClipboardContext::new() {
             Ok(clipboard_ctx) => Some(clipboard_ctx),
             Err(e) => {
+                #[cfg(any(feature = "tracing", feature = "log"))]
                 error!("Failed to initialize clipboard: {}", e);
+
+                #[cfg(not(any(feature = "tracing", feature = "log")))]
+                let _ = e;
+
                 None
             }
         };
@@ -451,15 +457,24 @@ where
                         if let Some(clipboard_ctx) = clipboard_ctx.as_mut()
                             && let Err(err) = clipboard_ctx.set_contents(text)
                         {
+                            #[cfg(any(feature = "tracing", feature = "log"))]
                             error!("Copy/Cut error: {}", err);
+
+                            #[cfg(not(any(feature = "tracing", feature = "log")))]
+                            let _ = err;
                         }
                     }
                     egui::OutputCommand::CopyImage(_) => {
+                        #[cfg(any(feature = "tracing", feature = "log"))]
                         warn!("Copying images is not supported in egui_baseview.");
                     }
                     egui::OutputCommand::OpenUrl(open_url) => {
                         if let Err(err) = open::that_detached(&open_url.url) {
+                            #[cfg(any(feature = "tracing", feature = "log"))]
                             error!("Open error: {}", err);
+
+                            #[cfg(not(any(feature = "tracing", feature = "log")))]
+                            let _ = err;
                         }
                     }
                 }
@@ -666,7 +681,11 @@ where
                             match clipboard_ctx.get_contents() {
                                 Ok(contents) => egui_input.events.push(egui::Event::Text(contents)),
                                 Err(err) => {
+                                    #[cfg(any(feature = "tracing", feature = "log"))]
                                     error!("Paste error: {}", err);
+
+                                    #[cfg(not(any(feature = "tracing", feature = "log")))]
+                                    let _ = err;
                                 }
                             }
                         }
