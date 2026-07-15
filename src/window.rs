@@ -166,13 +166,13 @@ where
         window: WindowContext,
         title: String,
         graphics_config: GraphicsConfig,
-        mut build: B,
+        build: B,
         output: O,
         update: U,
         mut state: State,
     ) -> EguiWindow<State, U, O>
     where
-        B: FnMut(&egui::Context, &mut ExtraOutputCommands, &mut State),
+        B: FnOnce(&egui::Context, &mut ExtraOutputCommands, &mut State),
         B: 'static + Send,
     {
         let renderer = Renderer::new(window.clone(), graphics_config).unwrap_or_else(|err| {
@@ -268,7 +268,7 @@ where
     ) -> WindowHandle
     where
         P: HasWindowHandle,
-        B: FnMut(&egui::Context, &mut ExtraOutputCommands, &mut State),
+        B: FnOnce(&egui::Context, &mut ExtraOutputCommands, &mut State),
         B: 'static + Send,
     {
         let options = WindowOpenOptions::new()
@@ -310,7 +310,7 @@ where
         output: O,
         update: U,
     ) where
-        B: FnMut(&egui::Context, &mut ExtraOutputCommands, &mut State),
+        B: FnOnce(&egui::Context, &mut ExtraOutputCommands, &mut State),
         B: 'static + Send,
     {
         let options = WindowOpenOptions::new()
