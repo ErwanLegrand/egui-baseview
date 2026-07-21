@@ -3,8 +3,8 @@ use std::time::Instant;
 
 use baseview::dpi::{LogicalPosition, LogicalSize, Size};
 use baseview::{
-    Event, EventStatus, Window, WindowContext, WindowHandle, WindowHandler, WindowOpenOptions,
-    WindowScalePolicy, WindowSize,
+    Event, EventStatus, HandlerError, ParentWindowHandle, Window, WindowContext, WindowHandler,
+    WindowSettings, WindowSize,
 };
 use copypasta::ClipboardProvider;
 use egui::{FullOutput, Pos2, Rect, Rgba, ViewportCommand, ViewportOutput, pos2, vec2};
@@ -25,10 +25,9 @@ pub struct EguiWindowSettings {
     /// The size of the window
     pub size: Size,
 
-    /// The dpi scaling policy
-    pub scale_policy: WindowScalePolicy,
-
     pub graphics: GraphicsConfig,
+
+    pub parent: Option<ParentWindowHandle>,
 }
 
 impl EguiWindowSettings {
@@ -38,7 +37,7 @@ impl EguiWindowSettings {
     }
 
     #[inline]
-    pub fn with_tile(mut self, title: impl Into<String>) -> Self {
+    pub fn with_title(mut self, title: impl Into<String>) -> Self {
         self.title = title.into();
         self
     }
@@ -50,8 +49,15 @@ impl EguiWindowSettings {
     }
 
     #[inline]
-    pub fn with_scale_policy(mut self, scale_policy: impl Into<WindowScalePolicy>) -> Self {
-        self.scale_policy = scale_policy.into();
+    pub fn with_parent<'a, P: HasWindowHandle + 'a>(
+        mut self,
+        parent: impl Into<Option<&'a P>>,
+    ) -> Self {
+        let Some(parent) = parent.into() else {
+            return self;
+        };
+
+        self.parent = Some(ParentWindowHandle::from_window(parent));
         self
     }
 
@@ -70,8 +76,8 @@ impl Default for EguiWindowSettings {
                 width: 300.0,
                 height: 200.0,
             }),
-            scale_policy: WindowScalePolicy::default(),
             graphics: GraphicsConfig::default(),
+            parent: None,
         }
     }
 }
@@ -246,9 +252,8 @@ where
         }
     }
 
-    /// Open a new child window.
+    /// Open a new window.
     ///
-    /// * `parent` - The parent window.
     /// * `settings` - The settings of the window.
     /// * `state` - The initial state of your application.
     /// * `build` - Called once before the first frame. Allows you to do setup code and to
@@ -258,29 +263,28 @@ where
     ///   the window is present. Optional.
     /// * `update` - Called before each frame. Here you should update the state of your
     ///   application and build the UI.
-    pub fn open_parented<P, B>(
-        parent: &P,
+    pub fn create<B>(
         settings: EguiWindowSettings,
         state: State,
         build: B,
         output: O,
         update: U,
-    ) -> WindowHandle
+    ) -> Window
     where
-        P: HasWindowHandle,
         B: FnOnce(&egui::Context, &mut ExtraOutputCommands, &mut State),
         B: 'static + Send,
     {
-        let options = WindowOpenOptions::new()
+        let mut options = WindowSettings::new()
             .with_title(settings.title.clone())
-            .with_size(settings.size)
-            .with_scale_policy(settings.scale_policy);
+            .with_size(settings.size);
+
+        options.parent = settings.parent;
 
         #[cfg(feature = "opengl")]
         let options = { options.with_gl_config(Some(settings.graphics.gl_config.clone())) };
 
-        Window::open_parented(parent, options, move |window| -> EguiWindow<State, U, O> {
-            EguiWindow::new(
+        Window::create(options, move |window| {
+            Ok(EguiWindow::new(
                 window,
                 settings.title,
                 settings.graphics,
@@ -288,50 +292,9 @@ where
                 output,
                 update,
                 state,
-            )
+            ))
         })
-    }
-
-    /// Open a new window that blocks the current thread until the window is destroyed.
-    ///
-    /// * `settings` - The settings of the window.
-    /// * `state` - The initial state of your application.
-    /// * `build` - Called once before the first frame. Allows you to do setup code and to
-    ///   call `ctx.set_fonts()`. Optional.
-    /// * `output` - Called after each `update`. Can be used to read egui's output commands to
-    ///   perform actions, i.e. asking the host to resize the window if a command to resize
-    ///   the window is present. Optional.
-    /// * `update` - Called before each frame. Here you should update the state of your
-    ///   application and build the UI.
-    pub fn open_blocking<B>(
-        settings: EguiWindowSettings,
-        state: State,
-        build: B,
-        output: O,
-        update: U,
-    ) where
-        B: FnOnce(&egui::Context, &mut ExtraOutputCommands, &mut State),
-        B: 'static + Send,
-    {
-        let options = WindowOpenOptions::new()
-            .with_title(settings.title.clone())
-            .with_size(settings.size)
-            .with_scale_policy(settings.scale_policy);
-
-        #[cfg(feature = "opengl")]
-        let options = { options.with_gl_config(Some(settings.graphics.gl_config.clone())) };
-
-        Window::open_blocking(options, move |window| -> EguiWindow<State, U, O> {
-            EguiWindow::new(
-                window,
-                settings.title,
-                settings.graphics,
-                build,
-                output,
-                update,
-                state,
-            )
-        })
+        .unwrap()
     }
 
     /// Update the pressed key modifiers when a mouse event has sent a new set of modifiers.
@@ -351,7 +314,7 @@ where
     O: FnMut(&FullOutput, &ViewportOutput, &mut State),
     O: 'static + Send,
 {
-    fn on_frame(&self) {
+    fn on_frame(&self) -> Result<(), HandlerError> {
         let egui_input = {
             let mut egui_input = self.egui_input.borrow_mut();
             egui_input.time = Some(self.start_time.elapsed().as_secs_f64());
@@ -395,7 +358,7 @@ where
         let Some(viewport_output) = full_output.viewport_output.get(&self.viewport_id) else {
             // The main window was closed by egui.
             self.window.request_close();
-            return;
+            return Ok(());
         };
 
         for command in viewport_output.commands.iter() {
@@ -406,9 +369,9 @@ where
                 ViewportCommand::InnerSize(size) => self.window.resize(LogicalSize {
                     width: size.x.max(1.0),
                     height: size.y.max(1.0),
-                }),
+                })?,
                 ViewportCommand::Focus => {
-                    self.window.focus();
+                    self.window.focus()?;
                 }
                 _ => {}
             }
@@ -486,7 +449,7 @@ where
         if self.current_cursor_icon.get() != cursor_icon {
             self.current_cursor_icon.set(cursor_icon);
 
-            self.window.set_mouse_cursor(cursor_icon);
+            self.window.set_mouse_cursor(cursor_icon)?;
         }
 
         // A temporary workaround for keyboard input not working sometimes.
@@ -499,9 +462,11 @@ where
                 window.focus();
             }
         }
+
+        Ok(())
     }
 
-    fn resized(&self, new_size: WindowSize) {
+    fn resized(&self, new_size: WindowSize) -> Result<(), HandlerError> {
         let screen_rect = logical_screen_rect(new_size);
 
         let mut egui_input = self.egui_input.borrow_mut();
@@ -516,6 +481,7 @@ where
         self.repaint_after.set(Some(Instant::now()));
 
         self.scale_factor.set(new_size.scale_factor);
+        Ok(())
     }
 
     fn on_event(&self, event: Event) -> EventStatus {
@@ -530,7 +496,7 @@ where
             baseview::Event::Mouse(baseview::MouseEvent::ButtonPressed { .. })
         ) && !self.window.has_focus()
         {
-            self.window.focus();
+            self.window.focus().unwrap();
         }
 
         match &event {

@@ -5,9 +5,9 @@ use egui_baseview::{EguiWindow, EguiWindowSettings, ExtraOutputCommands};
 fn main() {
     let state = State::new();
 
-    EguiWindow::open_blocking(
+    EguiWindow::create(
         EguiWindowSettings::new()
-            .with_tile("egui-baseview simple demo")
+            .with_title("egui-baseview simple demo")
             .with_size(Size::Logical(LogicalSize {
                 width: 400.0,
                 height: 200.0,
@@ -41,7 +41,9 @@ fn main() {
                 ui.hyperlink_to("free crouton", "https://crouton.net");
             });
         },
-    );
+    )
+    .run_until_closed()
+    .unwrap();
 }
 
 struct State {
