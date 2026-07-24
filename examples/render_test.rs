@@ -651,9 +651,9 @@ fn lerp_color_gamma(left: Color32, right: Color32, t: f32) -> Color32 {
 fn main() {
     let state = ColorTest::default();
 
-    EguiWindow::open_blocking(
+    EguiWindow::create(
         EguiWindowSettings::new()
-            .with_tile("egui-baseview render test")
+            .with_title("egui-baseview render test")
             .with_size(Size::Logical(LogicalSize {
                 width: 1280.0,
                 height: 720.0,
@@ -668,5 +668,7 @@ fn main() {
                     state.ui(ui);
                 });
         },
-    );
+    )
+    .run_until_closed()
+    .unwrap();
 }

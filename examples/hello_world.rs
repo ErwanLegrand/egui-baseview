@@ -5,9 +5,9 @@ use egui_baseview::{EguiWindow, EguiWindowSettings, ExtraOutputCommands};
 fn main() {
     let state = ();
 
-    EguiWindow::open_blocking(
+    EguiWindow::create(
         EguiWindowSettings::new()
-            .with_tile("egui-baseview hello world")
+            .with_title("egui-baseview hello world")
             .with_size(Size::Logical(LogicalSize {
                 width: 300.0,
                 height: 110.0,
@@ -20,5 +20,7 @@ fn main() {
                 ui.label("Hello World!");
             });
         },
-    );
+    )
+    .run_until_closed()
+    .unwrap();
 }

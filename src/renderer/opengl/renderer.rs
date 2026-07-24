@@ -46,11 +46,11 @@ impl Renderer {
     pub fn new(window: WindowContext, config: GraphicsConfig) -> Result<Self, OpenGlError> {
         let context = window.gl_context().ok_or(OpenGlError::NoContext)?;
         unsafe {
-            context.make_current();
+            context.make_current()?;
         }
 
         let glow_context = Arc::new(unsafe {
-            egui_glow::glow::Context::from_loader_function(|s| context.get_proc_address(s))
+            egui_glow::glow::Context::from_loader_function_cstr(|s| context.get_proc_address(s))
         });
 
         let painter = egui_glow::Painter::new(
@@ -62,7 +62,7 @@ impl Renderer {
         .map_err(OpenGlError::CreatePainter)?;
 
         unsafe {
-            context.make_not_current();
+            context.make_not_current()?;
         }
 
         Ok(Self {
@@ -98,7 +98,7 @@ impl Renderer {
             .gl_context()
             .expect("failed to get baseview gl context");
         unsafe {
-            context.make_current();
+            context.make_current().unwrap();
         }
 
         unsafe {
@@ -127,8 +127,8 @@ impl Renderer {
         }
 
         unsafe {
-            context.swap_buffers();
-            context.make_not_current();
+            context.swap_buffers().unwrap();
+            context.make_not_current().unwrap();
         }
     }
 }
