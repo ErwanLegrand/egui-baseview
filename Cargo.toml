@@ -18,7 +18,7 @@ wgpu = ["dep:egui-wgpu", "dep:pollster", "dep:wgpu"]
 ## See https://codeberg.org/RustAudio/egui-baseview/issues/20
 keyboard_focus_workaround = []
 ## Enables logging using `tracing`
-tracing = ["dep:tracing"]
+tracing = ["dep:tracing", "baseview/tracing"]
 ## Enables logging using `log`
 log = ["dep:log"]
 
