@@ -37,9 +37,8 @@ impl Default for GraphicsConfig {
 }
 
 pub struct Renderer {
-    glow_context: Arc<egui_glow::glow::Context>,
+    pub glow_context: Arc<egui_glow::glow::Context>,
     painter: Painter,
-    pub window: WindowContext,
 }
 
 impl Renderer {
@@ -66,7 +65,6 @@ impl Renderer {
         }
 
         Ok(Self {
-            window,
             glow_context,
             painter,
         })
@@ -78,7 +76,7 @@ impl Renderer {
 
     pub fn render(
         &mut self,
-        _window: &WindowContext,
+        window: &WindowContext,
         clear_color: egui::Rgba,
         physical_size: PhysicalSize<u32>,
         pixels_per_point: f32,
@@ -93,8 +91,7 @@ impl Renderer {
         let shapes = std::mem::take(&mut full_output.shapes);
         let textures_delta = &mut full_output.textures_delta;
 
-        let context = self
-            .window
+        let context = window
             .gl_context()
             .expect("failed to get baseview gl context");
         unsafe {

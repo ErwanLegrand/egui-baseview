@@ -1,10 +1,10 @@
-use baseview::dpi::{LogicalSize, Size};
-use egui::{CentralPanel, Context, FullOutput, Ui, ViewportOutput};
-use egui_baseview::{EguiWindow, EguiWindowSettings, ExtraOutputCommands};
+use egui::CentralPanel;
+use egui_baseview::{
+    EguiWindow, EguiWindowSettings,
+    baseview::dpi::{LogicalSize, Size},
+};
 
 fn main() {
-    let state = ();
-
     EguiWindow::create(
         EguiWindowSettings::new()
             .with_title("egui-baseview hello world")
@@ -12,15 +12,19 @@ fn main() {
                 width: 300.0,
                 height: 110.0,
             })),
-        state,
-        |_egui_ctx: &Context, _commands: &mut ExtraOutputCommands, _state: &mut ()| {},
-        |_output: &FullOutput, _viewport_output: &ViewportOutput, _state: &mut ()| {},
-        |ui: &mut Ui, _commands: &mut ExtraOutputCommands, _state: &mut ()| {
-            CentralPanel::default().show(ui, |ui| {
-                ui.label("Hello World!");
-            });
-        },
+        MyApp,
     )
+    .unwrap()
     .run_until_closed()
     .unwrap();
+}
+
+struct MyApp;
+
+impl egui_baseview::App for MyApp {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut egui_baseview::Frame) {
+        CentralPanel::default().show(ui, |ui| {
+            ui.label("Hello World!");
+        });
+    }
 }

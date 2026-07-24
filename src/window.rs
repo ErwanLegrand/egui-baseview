@@ -7,10 +7,11 @@ use baseview::{
     WindowSettings, WindowSize,
 };
 use copypasta::ClipboardProvider;
-use egui::{FullOutput, Pos2, Rect, Rgba, ViewportCommand, ViewportOutput, pos2, vec2};
+use egui::{Pos2, Rect, Rgba, ViewportCommand, pos2, vec2};
 use keyboard_types::Modifiers;
 use raw_window_handle::HasWindowHandle;
 
+use crate::App;
 use crate::{GraphicsConfig, renderer::Renderer};
 
 #[cfg(all(feature = "log", not(feature = "tracing")))]
@@ -82,28 +83,46 @@ impl Default for EguiWindowSettings {
     }
 }
 
-/// Extra egui-baseview related output commands.
-pub struct ExtraOutputCommands {
-    clear_color: Option<Rgba>,
-    key_capture: Option<KeyCapture>,
+/// Represents the surroundings of your app.
+pub struct Frame {
+    clear_color: Rgba,
+    key_capture: KeyCapture,
+    renderer: Renderer,
+    window: WindowContext,
 }
 
-impl ExtraOutputCommands {
-    pub(crate) fn new() -> Self {
-        Self {
-            clear_color: None,
-            key_capture: None,
-        }
-    }
-
+impl Frame {
     /// Set the clear color of the renderer.
     pub fn clear_color(&mut self, clear_color: Rgba) {
-        self.clear_color = Some(clear_color);
+        self.clear_color = clear_color;
     }
 
     /// Set how to handle capturing key events from the host.
     pub fn set_key_capture(&mut self, key_capture: KeyCapture) {
-        self.key_capture = Some(key_capture);
+        self.key_capture = key_capture;
+    }
+
+    /// Access the internal baseview window.
+    pub fn baseview_window(&self) -> &WindowContext {
+        &self.window
+    }
+
+    /// A reference to the underlying
+    /// [glow](https://docs.rs/glow/0.17.0/x86_64-unknown-linux-gnu/glow/index.html)
+    /// (OpenGL) context.
+    ///
+    /// This can be used, for instance, to:
+    ///
+    /// * Render things to offscreen buffers.
+    /// * Read the pixel buffer from the previous frame (glow::Context::read_pixels).
+    /// * Render things behind the egui windows.
+    ///
+    /// Note that all egui painting is deferred to after the call to App::ui
+    /// (egui only collects egui::Shapes and then egui-baseview paints them all in
+    /// one go later on).
+    #[cfg(feature = "opengl")]
+    pub fn gl(&self) -> &std::sync::Arc<egui_glow::glow::Context> {
+        &self.renderer.glow_context
     }
 }
 
@@ -121,34 +140,16 @@ pub enum KeyCapture {
     IgnoreKeys(Vec<keyboard_types::Key>),
 }
 
-struct EguiWindowInner<State, U, O>
-where
-    State: 'static + Send,
-    U: FnMut(&mut egui::Ui, &mut ExtraOutputCommands, &mut State),
-    U: 'static + Send,
-    O: FnMut(&FullOutput, &ViewportOutput, &mut State),
-    O: 'static + Send,
-{
-    user_state: State,
-    user_update: U,
-    user_output: O,
+struct EguiWindowInner<A: App> {
+    user_app: A,
     egui_ctx: egui::Context,
     clipboard_ctx: Option<copypasta::ClipboardContext>,
-    renderer: Renderer,
-    clear_color: Rgba,
-    key_capture: KeyCapture,
+    frame: Frame,
 }
 
 /// Handles an egui-baseview application
-pub struct EguiWindow<State, U, O>
-where
-    State: 'static + Send,
-    U: FnMut(&mut egui::Ui, &mut ExtraOutputCommands, &mut State),
-    U: 'static + Send,
-    O: FnMut(&FullOutput, &ViewportOutput, &mut State),
-    O: 'static + Send,
-{
-    inner: RefCell<EguiWindowInner<State, U, O>>,
+pub struct EguiWindow<A: App> {
+    inner: RefCell<EguiWindowInner<A>>,
     egui_input: RefCell<egui::RawInput>,
     viewport_id: egui::ViewportId,
     start_time: Instant,
@@ -160,33 +161,14 @@ where
     pub window: WindowContext,
 }
 
-impl<State, U, O> EguiWindow<State, U, O>
-where
-    State: 'static + Send,
-    U: FnMut(&mut egui::Ui, &mut ExtraOutputCommands, &mut State),
-    U: 'static + Send,
-    O: FnMut(&FullOutput, &ViewportOutput, &mut State),
-    O: 'static + Send,
-{
-    fn new<B>(
+impl<A: App> EguiWindow<A> {
+    fn new(
         window: WindowContext,
         title: String,
         graphics_config: GraphicsConfig,
-        build: B,
-        output: O,
-        update: U,
-        mut state: State,
-    ) -> EguiWindow<State, U, O>
-    where
-        B: FnOnce(&egui::Context, &mut ExtraOutputCommands, &mut State),
-        B: 'static + Send,
-    {
-        let renderer = Renderer::new(window.clone(), graphics_config).unwrap_or_else(|err| {
-            // TODO: better error log and not panicking, but that's gonna require baseview changes
-            #[cfg(any(feature = "tracing", feature = "log"))]
-            error!("oops! the gpu backend couldn't initialize! \n {err}");
-            panic!("gpu backend failed to initialize: \n {err}")
-        });
+        mut user_app: A,
+    ) -> Result<EguiWindow<A>, HandlerError> {
+        let renderer = Renderer::new(window.clone(), graphics_config)?;
         let egui_ctx = egui::Context::default();
 
         let size = window.size();
@@ -211,9 +193,14 @@ where
         };
         let _ = egui_input.viewports.insert(viewport_id, viewport_info);
 
-        let mut commands = ExtraOutputCommands::new();
+        let mut frame = Frame {
+            clear_color: Rgba::BLACK,
+            key_capture: Default::default(),
+            renderer,
+            window: window.clone(),
+        };
 
-        (build)(&egui_ctx, &mut commands, &mut state);
+        user_app.build(&egui_ctx, &mut frame)?;
 
         let clipboard_ctx = match copypasta::ClipboardContext::new() {
             Ok(clipboard_ctx) => Some(clipboard_ctx),
@@ -230,16 +217,12 @@ where
 
         let start_time = Instant::now();
 
-        Self {
+        Ok(Self {
             inner: RefCell::new(EguiWindowInner {
-                user_state: state,
-                user_update: update,
-                user_output: output,
+                user_app,
                 egui_ctx,
                 clipboard_ctx,
-                renderer,
-                clear_color: commands.clear_color.unwrap_or(Rgba::BLACK),
-                key_capture: commands.key_capture.unwrap_or_default(),
+                frame,
             }),
             viewport_id,
             start_time,
@@ -249,31 +232,14 @@ where
             scale_factor: scale_factor.into(),
             repaint_after: Some(start_time).into(),
             window,
-        }
+        })
     }
 
     /// Open a new window.
     ///
     /// * `settings` - The settings of the window.
-    /// * `state` - The initial state of your application.
-    /// * `build` - Called once before the first frame. Allows you to do setup code and to
-    ///   call `ctx.set_fonts()`. Optional.
-    /// * `output` - Called after each `update`. Can be used to read egui's output commands to
-    ///   perform actions, i.e. asking the host to resize the window if a command to resize
-    ///   the window is present. Optional.
-    /// * `update` - Called before each frame. Here you should update the state of your
-    ///   application and build the UI.
-    pub fn create<B>(
-        settings: EguiWindowSettings,
-        state: State,
-        build: B,
-        output: O,
-        update: U,
-    ) -> Window
-    where
-        B: FnOnce(&egui::Context, &mut ExtraOutputCommands, &mut State),
-        B: 'static + Send,
-    {
+    /// * `app` - The application to run.
+    pub fn create(settings: EguiWindowSettings, app: A) -> Result<Window, baseview::Error> {
         let mut options = WindowSettings::new()
             .with_title(settings.title.clone())
             .with_size(settings.size);
@@ -284,17 +250,8 @@ where
         let options = { options.with_gl_config(Some(settings.graphics.gl_config.clone())) };
 
         Window::create(options, move |window| {
-            Ok(EguiWindow::new(
-                window,
-                settings.title,
-                settings.graphics,
-                build,
-                output,
-                update,
-                state,
-            ))
+            EguiWindow::new(window, settings.title, settings.graphics, app)
         })
-        .unwrap()
     }
 
     /// Update the pressed key modifiers when a mouse event has sent a new set of modifiers.
@@ -306,14 +263,7 @@ where
     }
 }
 
-impl<State, U, O> WindowHandler for EguiWindow<State, U, O>
-where
-    State: 'static + Send,
-    U: FnMut(&mut egui::Ui, &mut ExtraOutputCommands, &mut State),
-    U: 'static + Send,
-    O: FnMut(&FullOutput, &ViewportOutput, &mut State),
-    O: 'static + Send,
-{
+impl<A: App> WindowHandler for EguiWindow<A> {
     fn on_frame(&self) -> Result<(), HandlerError> {
         let egui_input = {
             let mut egui_input = self.egui_input.borrow_mut();
@@ -323,33 +273,18 @@ where
         };
 
         let mut full_output = {
-            let mut extra_commands = ExtraOutputCommands::new();
-
             let mut inner = self.inner.borrow_mut();
             let EguiWindowInner {
-                user_state,
-                user_update,
-                user_output,
+                user_app,
                 egui_ctx,
                 clipboard_ctx: _,
-                renderer: _,
-                clear_color,
-                key_capture,
+                frame,
             } = &mut *inner;
 
-            let output = egui_ctx.run_ui(egui_input, |ui| {
-                user_update(ui, &mut extra_commands, user_state)
-            });
-
-            if let Some(c) = extra_commands.clear_color.take() {
-                *clear_color = c;
-            }
-            if let Some(k) = extra_commands.key_capture.take() {
-                *key_capture = k;
-            }
+            let output = egui_ctx.run_ui(egui_input, |ui| user_app.ui(ui, frame));
 
             if let Some(viewport_output) = output.viewport_output.get(&self.viewport_id) {
-                user_output(&output, viewport_output, user_state);
+                user_app.output(&output, viewport_output);
             }
 
             output
@@ -380,14 +315,10 @@ where
         {
             let mut inner = self.inner.borrow_mut();
             let EguiWindowInner {
-                user_state: _,
-                user_update: _,
-                user_output: _,
+                user_app: _,
                 egui_ctx,
                 clipboard_ctx,
-                renderer,
-                clear_color: bg_color,
-                key_capture: _,
+                frame,
             } = &mut *inner;
 
             let now = Instant::now();
@@ -399,9 +330,9 @@ where
 
             if do_repaint_now {
                 let size = self.window.size();
-                renderer.render(
+                frame.renderer.render(
                     &self.window,
-                    *bg_color,
+                    frame.clear_color,
                     size.physical,
                     size.scale_factor as f32,
                     egui_ctx,
@@ -663,7 +594,7 @@ where
                     }
                 }
 
-                match &self.inner.borrow().key_capture {
+                match &self.inner.borrow().frame.key_capture {
                     KeyCapture::CaptureAll => {}
                     KeyCapture::IgnoreAll => return_status = EventStatus::Ignored,
                     KeyCapture::CaptureKeys(keys) => {
