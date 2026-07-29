@@ -1,17 +1,14 @@
 use egui::CentralPanel;
-use egui_baseview::{
-    EguiWindow, EguiWindowSettings,
-    baseview::dpi::{LogicalSize, Size},
-};
+use egui_baseview::{EguiWindow, EguiWindowSettings, baseview::dpi::LogicalSize};
 
 fn main() {
     EguiWindow::create(
         EguiWindowSettings::new()
             .with_title("egui-baseview hello world")
-            .with_size(Size::Logical(LogicalSize {
+            .with_size(LogicalSize {
                 width: 300.0,
                 height: 110.0,
-            })),
+            }),
         MyApp,
     )
     .unwrap()

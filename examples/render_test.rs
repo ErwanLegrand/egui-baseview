@@ -1,8 +1,5 @@
 use egui::{TextureOptions, widgets::color_picker::show_color, *};
-use egui_baseview::{
-    EguiWindow, EguiWindowSettings, Frame,
-    baseview::dpi::{LogicalSize, Size},
-};
+use egui_baseview::{EguiWindow, EguiWindowSettings, Frame, baseview::dpi::LogicalSize};
 use std::collections::HashMap;
 
 const GRADIENT_SIZE: Vec2 = vec2(256.0, 18.0);
@@ -663,10 +660,10 @@ fn main() {
     EguiWindow::create(
         EguiWindowSettings::new()
             .with_title("egui-baseview render test")
-            .with_size(Size::Logical(LogicalSize {
+            .with_size(LogicalSize {
                 width: 1280.0,
                 height: 720.0,
-            })),
+            }),
         RenderTest::default(),
     )
     .unwrap()

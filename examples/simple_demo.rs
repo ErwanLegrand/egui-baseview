@@ -1,18 +1,21 @@
 use egui::CentralPanel;
 use egui_baseview::{
-    EguiWindow, EguiWindowSettings, Frame,
-    baseview::HandlerError,
-    baseview::dpi::{LogicalSize, Size},
+    EguiWindow, EguiWindowSettings, Frame, ResizeMode,
+    baseview::{HandlerError, dpi::LogicalSize},
 };
 
 fn main() {
     EguiWindow::create(
         EguiWindowSettings::new()
             .with_title("egui-baseview simple demo")
-            .with_size(Size::Logical(LogicalSize {
+            .with_size(LogicalSize {
                 width: 400.0,
                 height: 200.0,
-            })),
+            })
+            // The other option is `ResizeMode::ZoomViewport`, which zooms
+            // the contents when the window is resized.
+            .with_resize_mode(ResizeMode::ExpandViewport)
+            .with_zoom_factor(1.0),
         MyApp::new(),
     )
     .unwrap()
@@ -63,9 +66,4 @@ impl egui_baseview::App for MyApp {
             ui.hyperlink_to("free crouton", "https://crouton.net");
         });
     }
-
-    /// Called after each `ui` call. This can be used to read egui's output commands
-    /// to perform plugin-related actions, i.e. asking the host to resize the window
-    /// if a command to resize the window is present.
-    fn output(&mut self, _output: &egui::FullOutput, _viewport_output: &egui::ViewportOutput) {}
 }
