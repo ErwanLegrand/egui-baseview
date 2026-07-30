@@ -70,11 +70,7 @@ impl EguiWindowSettings {
         mut self,
         parent: impl Into<Option<&'a P>>,
     ) -> Self {
-        let Some(parent) = parent.into() else {
-            return self;
-        };
-
-        self.parent = Some(ParentWindowHandle::from_window(parent));
+        self.parent = parent.into().map(ParentWindowHandle::from_window);
         self
     }
 
@@ -101,10 +97,14 @@ impl Default for EguiWindowSettings {
     }
 }
 
+/// How the viewport should resize when the window is resized
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResizeMode {
     #[default]
+    // Expand the contents of the viewport to fit the window size
     ExpandViewport,
+    // Zoom the contents of the viewport to fit the window size. This can be
+    // useful for some plugins that have a fixed layout.
     ZoomViewport,
 }
 
@@ -193,6 +193,7 @@ pub struct EguiWindow<A: App> {
     repaint_after: Cell<Option<Instant>>,
     resize_mode: ResizeMode,
     initial_size: LogicalSize<f32>,
+    did_resize: Cell<bool>,
 
     pub window: WindowContext,
 }
@@ -236,7 +237,7 @@ impl<A: App> EguiWindow<A> {
 
         let mut frame = Frame::new(renderer, window.clone());
 
-        user_app.build(&egui_ctx, &mut frame)?;
+        user_app.build(egui_ctx.clone(), &mut frame)?;
 
         let clipboard_ctx = match copypasta::ClipboardContext::new() {
             Ok(clipboard_ctx) => Some(clipboard_ctx),
@@ -269,6 +270,7 @@ impl<A: App> EguiWindow<A> {
             repaint_after: Some(start_time).into(),
             resize_mode,
             initial_size,
+            did_resize: Cell::new(false),
             window,
         })
     }
@@ -367,6 +369,7 @@ impl<A: App> WindowHandler for EguiWindow<A> {
         };
 
         let mut new_size = None;
+        let mut new_zoom = { self.inner.borrow().egui_ctx.zoom_factor() };
 
         for command in viewport_output.commands.iter() {
             match command {
@@ -374,7 +377,18 @@ impl<A: App> WindowHandler for EguiWindow<A> {
                     self.window.request_close();
                 }
                 ViewportCommand::InnerSize(size) => {
-                    new_size = Some(LogicalSize::new(size.x, size.y))
+                    if self.resize_mode == ResizeMode::ZoomViewport {
+                        let new_aspect = size.x / size.y;
+                        let initial_aspect = self.initial_size.width / self.initial_size.height;
+
+                        new_zoom = if new_aspect < initial_aspect {
+                            size.x * new_zoom / self.initial_size.width
+                        } else {
+                            size.y * new_zoom / self.initial_size.height
+                        };
+                    } else {
+                        new_size = Some(LogicalSize::new(size.x * new_zoom, size.y * new_zoom))
+                    }
                 }
                 ViewportCommand::Focus => {
                     self.window.focus()?;
@@ -384,25 +398,19 @@ impl<A: App> WindowHandler for EguiWindow<A> {
         }
 
         if self.resize_mode == ResizeMode::ZoomViewport {
-            let new_zoom = self.inner.borrow().egui_ctx.zoom_factor();
-            if new_zoom != prev_zoom {
+            if new_zoom != prev_zoom || self.did_resize.replace(false) {
                 new_size = Some(LogicalSize {
                     width: self.initial_size.width * new_zoom,
                     height: self.initial_size.height * new_zoom,
                 });
+
+                self.inner.borrow_mut().egui_ctx.set_zoom_factor(new_zoom);
             }
         }
 
         if let Some(new_size) = new_size {
             if let Err(e) = self.window.resize(new_size) {
                 error!("Failed to resize window: {}", e);
-            } else if self.resize_mode == ResizeMode::ZoomViewport {
-                let zoom_factor = new_size.width / self.initial_size.width;
-
-                self.inner
-                    .borrow_mut()
-                    .egui_ctx
-                    .set_zoom_factor(zoom_factor);
             }
         }
 
@@ -495,7 +503,14 @@ impl<A: App> WindowHandler for EguiWindow<A> {
         let zoom_factor = match self.resize_mode {
             ResizeMode::ExpandViewport => self.inner.borrow().egui_ctx.zoom_factor(),
             ResizeMode::ZoomViewport => {
-                let zoom_factor = new_size.logical.width as f32 / self.initial_size.width;
+                let new_aspect = new_size.logical.width / new_size.logical.height;
+                let initial_aspect = self.initial_size.width / self.initial_size.height;
+
+                let zoom_factor = if (new_aspect as f32) < initial_aspect {
+                    new_size.logical.width as f32 / self.initial_size.width
+                } else {
+                    new_size.logical.height as f32 / self.initial_size.height
+                };
 
                 self.inner
                     .borrow_mut()
@@ -516,10 +531,10 @@ impl<A: App> WindowHandler for EguiWindow<A> {
         viewport_info.native_pixels_per_point = Some(new_size.scale_factor as f32);
         viewport_info.inner_rect = Some(screen_rect);
 
-        // Schedule to repaint on the next frame.
         self.repaint_after.set(Some(Instant::now()));
-
         self.scale_factor.set(new_size.scale_factor);
+        self.did_resize.set(true);
+
         Ok(())
     }
 

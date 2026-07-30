@@ -15,7 +15,7 @@ pub trait App: Send + 'static {
     /// If an error is returned, then the window will be closed.
     fn build(
         &mut self,
-        egui_ctx: &egui::Context,
+        egui_ctx: egui::Context,
         frame: &mut Frame,
     ) -> Result<(), baseview::HandlerError> {
         let _ = egui_ctx;

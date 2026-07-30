@@ -11,7 +11,7 @@ categories = ["gui"]
 readme = "README.md"
 
 [features]
-default = ["opengl", "tracing"]
+default = ["wgpu", "tracing"]
 opengl = ["dep:egui_glow", "baseview/opengl"]
 wgpu = ["dep:egui-wgpu", "dep:pollster", "dep:wgpu"]
 ## Enables a temporary workaround for keyboard input not working sometimes.

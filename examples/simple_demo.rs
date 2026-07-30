@@ -15,6 +15,8 @@ fn main() {
             // The other option is `ResizeMode::ZoomViewport`, which zooms
             // the contents when the window is resized.
             .with_resize_mode(ResizeMode::ExpandViewport)
+            // A custom zoom factor can be set here. (The zoom factor can also be
+            // changed later with `egui_ctx.set_zoom_factor()`.)
             .with_zoom_factor(1.0),
         MyApp::new(),
     )
@@ -42,7 +44,7 @@ impl egui_baseview::App for MyApp {
     /// can be done here.
     ///
     /// If an error is returned, then the window will be closed.
-    fn build(&mut self, _egui_ctx: &egui::Context, _frame: &mut Frame) -> Result<(), HandlerError> {
+    fn build(&mut self, _egui_ctx: egui::Context, _frame: &mut Frame) -> Result<(), HandlerError> {
         Ok(())
     }
 
