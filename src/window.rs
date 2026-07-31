@@ -32,6 +32,7 @@ pub struct EguiWindowSettings {
 
     pub graphics: GraphicsConfig,
 
+    pub parented: bool,
     pub parent: Option<ParentWindowHandle>,
 }
 
@@ -39,6 +40,12 @@ impl EguiWindowSettings {
     #[inline]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    #[inline]
+    pub fn parented(mut self) -> Self {
+        self.parented = true;
+        self
     }
 
     #[inline]
@@ -92,6 +99,7 @@ impl Default for EguiWindowSettings {
             resize_mode: ResizeMode::default(),
             zoom_factor: 1.0,
             graphics: GraphicsConfig::default(),
+            parented: false,
             parent: None,
         }
     }
@@ -306,6 +314,10 @@ impl<A: App> EguiWindow<A> {
         let mut options = WindowSettings::new()
             .with_title(settings.title.clone())
             .with_size(size);
+
+        if settings.parented {
+            options = options.parented()
+        }
 
         options.parent = settings.parent;
 
