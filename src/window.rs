@@ -19,21 +19,40 @@ use log::{error, warn};
 #[cfg(feature = "tracing")]
 use tracing::{error, warn};
 
+/// Settings used when creating a new window
 #[derive(Debug, Clone)]
 pub struct EguiWindowSettings {
+    /// The window title.
     pub title: String,
 
-    /// The initial size of the window.
+    /// The size of the window, either in physical or logical coordinates.
     pub size: LogicalSize<f32>,
 
+    /// How the viewport should resize when the window is resized
     pub resize_mode: ResizeMode,
 
+    /// The amount of zoom (scaling) to apply. This is applied on top of the
+    /// system's native scaling factor.
+    ///
+    /// The zoom factor can also be changed later with
+    /// [`Context::set_zoom_factor()`](egui::Context::set_zoom_factor).
     pub zoom_factor: f32,
 
+    /// The graphics configuration
     pub graphics: GraphicsConfig,
 
-    pub parented: bool,
+    /// If the window is to be embedded in a parent window, the handle to that window.
+    ///
+    /// If `None`, the window will be standalone.
     pub parent: Option<ParentWindowHandle>,
+
+    /// If the window expects to have a parent when first displayed.
+    ///
+    /// Setting this will delay the actual creation of the window until the parent is set (unless
+    /// the window is shown first).
+    ///
+    /// If the `parent` field is already set, this does nothing and is ignored.
+    pub wait_for_parent: bool,
 }
 
 impl EguiWindowSettings {
@@ -42,36 +61,41 @@ impl EguiWindowSettings {
         Self::default()
     }
 
-    #[inline]
-    pub fn parented(mut self) -> Self {
-        self.parented = true;
-        self
-    }
-
+    /// The window title.
     #[inline]
     pub fn with_title(mut self, title: impl Into<String>) -> Self {
         self.title = title.into();
         self
     }
 
+    /// The size of the window, in logical coordinates.
     #[inline]
     pub fn with_size(mut self, size: impl Into<LogicalSize<f32>>) -> Self {
         self.size = size.into();
         self
     }
 
+    /// How the viewport should resize when the window is resized
     #[inline]
     pub fn with_resize_mode(mut self, resize_mode: ResizeMode) -> Self {
         self.resize_mode = resize_mode;
         self
     }
 
+    /// The amount of zoom (scaling) to apply. This is applied on top of the
+    /// system's native scaling factor.
+    ///
+    /// The zoom factor can also be changed later with
+    /// [`Context::set_zoom_factor()`](egui::Context::set_zoom_factor).
     #[inline]
     pub fn with_zoom_factor(mut self, zoom_factor: f32) -> Self {
         self.zoom_factor = zoom_factor;
         self
     }
 
+    /// If the window is to be embedded in a parent window, the handle to that window.
+    ///
+    /// If `None`, the window will be standalone.
     #[inline]
     pub fn with_parent<'a, P: HasWindowHandle + 'a>(
         mut self,
@@ -81,6 +105,20 @@ impl EguiWindowSettings {
         self
     }
 
+    /// Sets [`wait_for_parent`](Self::wait_for_parent) to the given value.
+    pub fn with_wait_for_parent(mut self, wait_for_parent: bool) -> Self {
+        self.wait_for_parent = wait_for_parent;
+        self
+    }
+
+    /// Sets [`wait_for_parent`](Self::wait_for_parent) to `true`.
+    #[inline]
+    pub fn wait_for_parent(mut self) -> Self {
+        self.wait_for_parent = true;
+        self
+    }
+
+    /// The graphics configuration
     #[inline]
     pub fn with_graphics_config(mut self, config: GraphicsConfig) -> Self {
         self.graphics = config;
@@ -99,8 +137,8 @@ impl Default for EguiWindowSettings {
             resize_mode: ResizeMode::default(),
             zoom_factor: 1.0,
             graphics: GraphicsConfig::default(),
-            parented: false,
             parent: None,
+            wait_for_parent: false,
         }
     }
 }
@@ -313,11 +351,8 @@ impl<A: App> EguiWindow<A> {
 
         let mut options = WindowSettings::new()
             .with_title(settings.title.clone())
-            .with_size(size);
-
-        if settings.parented {
-            options = options.parented()
-        }
+            .with_size(size)
+            .with_wait_for_parent(settings.wait_for_parent);
 
         options.parent = settings.parent;
 
