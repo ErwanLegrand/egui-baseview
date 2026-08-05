@@ -1,6 +1,7 @@
+use baseview::WindowSize;
 use egui::CentralPanel;
 use egui_baseview::{
-    EguiWindow, EguiWindowSettings, Frame, ResizeMode,
+    EguiWindow, EguiWindowSettings, Frame,
     baseview::{HandlerError, dpi::LogicalSize},
 };
 
@@ -12,9 +13,6 @@ fn main() {
                 width: 400.0,
                 height: 200.0,
             })
-            // The other option is `ResizeMode::ZoomViewport`, which zooms
-            // the contents when the window is resized.
-            .with_resize_mode(ResizeMode::ExpandViewport)
             // A custom zoom factor can be set here. (The zoom factor can also be
             // changed later with `egui_ctx.set_zoom_factor()`.)
             .with_zoom_factor(1.0),
@@ -67,5 +65,17 @@ impl egui_baseview::App for MyApp {
 
             ui.hyperlink_to("free crouton", "https://crouton.net");
         });
+    }
+
+    /// Called when the window has been resized.
+    ///
+    /// The given size takes the zoom factor into account.
+    fn resized(&mut self, size: WindowSize) {
+        let _ = size;
+    }
+
+    /// Called when the zoom factor has changed.
+    fn zoom_factor_changed(&mut self, zoom_factor: f32) {
+        let _ = zoom_factor;
     }
 }

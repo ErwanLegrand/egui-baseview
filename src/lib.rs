@@ -3,9 +3,10 @@ mod translate;
 mod window;
 
 pub use baseview;
+use baseview::WindowSize;
 pub use keyboard_types::Key;
 pub use renderer::GraphicsConfig;
-pub use window::{EguiWindow, EguiWindowSettings, Frame, KeyCapture, ResizeMode};
+pub use window::{EguiWindow, EguiWindowSettings, Frame, KeyCapture};
 
 /// Implement this trait to run an app with egui-baseview.
 pub trait App: Send + 'static {
@@ -25,4 +26,16 @@ pub trait App: Send + 'static {
 
     /// Called each time the UI needs repainting, which may be many times per second.
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut Frame);
+
+    /// Called when the window has been resized.
+    ///
+    /// The given size takes the zoom factor into account.
+    fn resized(&mut self, size: WindowSize) {
+        let _ = size;
+    }
+
+    /// Called when the zoom factor has changed.
+    fn zoom_factor_changed(&mut self, zoom_factor: f32) {
+        let _ = zoom_factor;
+    }
 }

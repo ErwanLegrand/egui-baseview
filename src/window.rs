@@ -1,7 +1,7 @@
 use std::cell::{Cell, RefCell};
 use std::time::Instant;
 
-use baseview::dpi::{LogicalPosition, LogicalSize, PhysicalSize, Size};
+use baseview::dpi::{LogicalPosition, LogicalSize, Size};
 use baseview::{
     Event, EventStatus, HandlerError, ParentWindowHandle, Window, WindowContext, WindowHandler,
     WindowSettings, WindowSize,
@@ -26,15 +26,7 @@ pub struct EguiWindowSettings {
     pub title: String,
 
     /// The size of the window, either in physical or logical coordinates.
-    ///
-    /// Note, changing the window size with
-    /// [`Ui::send_viewport_cmd`](https://docs.rs/egui/latest/egui/struct.Ui.html#method.send_viewport_cmd)
-    /// will NOT work when this is set to physical units. If working in physical units, change the
-    /// window size with [`Frame::baseview_window()`] instead.
     pub size: Size,
-
-    /// How the viewport should resize when the window is resized
-    pub resize_mode: ResizeMode,
 
     /// The amount of zoom (scaling) to apply. This is applied on top of the
     /// system's native scaling factor.
@@ -58,6 +50,22 @@ pub struct EguiWindowSettings {
     ///
     /// If the `parent` field is already set, this does nothing and is ignored.
     pub wait_for_parent: bool,
+
+    /// A fallback scale factor, if Baseview couldn't get one from the platform.
+    ///
+    /// If the platform does already provide an accurate scaling factor, this doesn't do anything.
+    ///
+    /// If the given fallback scale factor is actually useful and different from the current one
+    /// (1.0 by default), this will resize and redraw the window accordingly.
+    ///
+    /// # Platform compatibility notes.
+    ///
+    /// On Win32, this value is used if running on early versions of Windows 10 (or earlier).
+    ///
+    /// On X11, this value is used if no `Xft.dpi`setting is set.
+    ///
+    /// On macOS, this function is always a no-op.
+    pub fallback_scale_factor: Option<f64>,
 }
 
 impl EguiWindowSettings {
@@ -77,15 +85,6 @@ impl EguiWindowSettings {
     #[inline]
     pub fn with_size(mut self, size: impl Into<Size>) -> Self {
         self.size = size.into();
-        self
-    }
-
-    /// How the viewport should resize when the window is resized
-    ///
-    /// This is ignored if [`size`](EguiWindowSettings::size) is in physical units.
-    #[inline]
-    pub fn with_resize_mode(mut self, resize_mode: ResizeMode) -> Self {
-        self.resize_mode = resize_mode;
         self
     }
 
@@ -127,6 +126,13 @@ impl EguiWindowSettings {
         self
     }
 
+    /// Sets [`fallback_scale_factor`](Self::fallback_scale_factor) to the given value.
+    #[inline]
+    pub fn with_fallback_scale_factor(mut self, scale_factor: impl Into<Option<f64>>) -> Self {
+        self.fallback_scale_factor = scale_factor.into();
+        self
+    }
+
     /// The graphics configuration
     #[inline]
     pub fn with_graphics_config(mut self, config: GraphicsConfig) -> Self {
@@ -143,24 +149,13 @@ impl Default for EguiWindowSettings {
                 width: 300.0,
                 height: 200.0,
             }),
-            resize_mode: ResizeMode::default(),
             zoom_factor: 1.0,
             graphics: GraphicsConfig::default(),
             parent: None,
             wait_for_parent: false,
+            fallback_scale_factor: None,
         }
     }
-}
-
-/// How the viewport should resize when the window is resized
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ResizeMode {
-    #[default]
-    // Expand the contents of the viewport to fit the window size
-    ExpandViewport,
-    // Zoom the contents of the viewport to fit the window size. This can be
-    // useful for some plugins that have a fixed layout.
-    ZoomViewport,
 }
 
 /// Represents the surroundings of your app.
@@ -246,9 +241,6 @@ pub struct EguiWindow<A: App> {
     pointer_logical_pos: Cell<Option<egui::Pos2>>,
     current_cursor_icon: Cell<baseview::MouseCursor>,
     repaint_after: Cell<Option<Instant>>,
-    resize_mode: ResizeMode,
-    initial_size: Size,
-    did_resize: Cell<bool>,
 
     pub window: WindowContext,
 }
@@ -259,8 +251,6 @@ impl<A: App> EguiWindow<A> {
         title: String,
         graphics_config: GraphicsConfig,
         mut user_app: A,
-        resize_mode: ResizeMode,
-        initial_size: Size,
         zoom_factor: f32,
     ) -> Result<EguiWindow<A>, HandlerError> {
         let renderer = Renderer::new(window.clone(), graphics_config)?;
@@ -270,8 +260,15 @@ impl<A: App> EguiWindow<A> {
 
         let size = window.size();
 
-        let screen_rect = logical_screen_rect(size, zoom_factor);
         let system_scale_factor = size.scale_factor;
+        let total_scale_factor = system_scale_factor * zoom_factor as f64;
+
+        let logical_size: LogicalSize<f64> = size.physical.to_logical(total_scale_factor);
+
+        let screen_rect = Rect::from_min_size(
+            Pos2::new(0f32, 0f32),
+            vec2(logical_size.width as f32, logical_size.height as f32),
+        );
 
         let viewport_info = egui::ViewportInfo {
             parent: None,
@@ -323,9 +320,6 @@ impl<A: App> EguiWindow<A> {
             current_cursor_icon: baseview::MouseCursor::Default.into(),
             scale_factor: system_scale_factor.into(),
             repaint_after: Some(start_time).into(),
-            resize_mode,
-            initial_size,
-            did_resize: Cell::new(false),
             window,
         })
     }
@@ -348,23 +342,18 @@ impl<A: App> EguiWindow<A> {
         host: Option<baseview::host::Host>,
     ) -> Result<Window, baseview::Error> {
         let size = match settings.size {
-            Size::Logical(size) => match settings.resize_mode {
-                ResizeMode::ExpandViewport => Size::Logical(LogicalSize {
-                    width: size.width as f64 * settings.zoom_factor as f64,
-                    height: size.height as f64 * settings.zoom_factor as f64,
-                }),
-                ResizeMode::ZoomViewport => Size::Logical(LogicalSize {
-                    width: size.width as f64 * settings.zoom_factor as f64,
-                    height: size.height as f64 * settings.zoom_factor as f64,
-                }),
-            },
+            Size::Logical(size) => Size::Logical(LogicalSize {
+                width: size.width as f64 * settings.zoom_factor as f64,
+                height: size.height as f64 * settings.zoom_factor as f64,
+            }),
             Size::Physical(size) => Size::Physical(size),
         };
 
         let mut options = WindowSettings::new()
             .with_title(settings.title.clone())
             .with_size(size)
-            .with_wait_for_parent(settings.wait_for_parent);
+            .with_wait_for_parent(settings.wait_for_parent)
+            .with_fallback_scale_factor(settings.fallback_scale_factor);
 
         options.parent = settings.parent;
 
@@ -379,8 +368,6 @@ impl<A: App> EguiWindow<A> {
                     settings.title,
                     settings.graphics,
                     app,
-                    settings.resize_mode,
-                    settings.size,
                     settings.zoom_factor,
                 )
             },
@@ -399,14 +386,26 @@ impl<A: App> EguiWindow<A> {
 
 impl<A: App> WindowHandler for EguiWindow<A> {
     fn on_frame(&self) -> Result<(), HandlerError> {
-        let (egui_input, prev_zoom) = {
+        let (egui_input, prev_zoom, logical_size) = {
             let mut egui_input = self.egui_input.borrow_mut();
             egui_input.time = Some(self.start_time.elapsed().as_secs_f64());
 
-            let zoom = self.inner.borrow().egui_ctx.zoom_factor();
+            let zoom_factor = self.inner.borrow().egui_ctx.zoom_factor();
 
-            egui_input.screen_rect = Some(logical_screen_rect(self.window.size(), zoom));
-            (egui_input.take(), zoom)
+            let size = self.window.size();
+            let logical_size: LogicalSize<f32> = self
+                .window
+                .size()
+                .physical
+                .to_logical(size.scale_factor * zoom_factor as f64);
+
+            let screen_rect = Rect::from_min_size(
+                Pos2::new(0f32, 0f32),
+                vec2(logical_size.width, logical_size.height),
+            );
+
+            egui_input.screen_rect = Some(screen_rect);
+            (egui_input.take(), zoom_factor, logical_size)
         };
 
         let mut full_output = {
@@ -428,60 +427,36 @@ impl<A: App> WindowHandler for EguiWindow<A> {
         };
 
         let mut new_size = None;
-        let mut new_zoom = { self.inner.borrow().egui_ctx.zoom_factor() };
+        let new_zoom = { self.inner.borrow().egui_ctx.zoom_factor() };
+
+        if new_zoom != prev_zoom {
+            let mut inner = self.inner.borrow_mut();
+
+            inner.egui_ctx.set_zoom_factor(new_zoom);
+            inner.user_app.zoom_factor_changed(new_zoom);
+
+            new_size = Some(Size::Logical(LogicalSize::new(
+                (logical_size.width * new_zoom) as f64,
+                (logical_size.height * new_zoom) as f64,
+            )));
+        }
 
         for command in viewport_output.commands.iter() {
             match command {
                 ViewportCommand::Close => {
                     self.window.request_close();
                 }
-                ViewportCommand::InnerSize(size) => match self.initial_size {
-                    Size::Logical(initial_size) => {
-                        if self.resize_mode == ResizeMode::ZoomViewport {
-                            let new_aspect = size.x / size.y;
-                            let initial_aspect =
-                                initial_size.width as f32 / initial_size.height as f32;
-
-                            new_zoom = if new_aspect < initial_aspect {
-                                size.x * new_zoom / initial_size.width as f32
-                            } else {
-                                size.y * new_zoom / initial_size.height as f32
-                            };
-                        } else {
-                            new_size = Some(Size::Logical(LogicalSize::new(
-                                (size.x * new_zoom) as f64,
-                                (size.y * new_zoom) as f64,
-                            )))
-                        }
-                    }
-                    Size::Physical(_) => {}
-                },
+                ViewportCommand::InnerSize(size) => {
+                    new_size = Some(Size::Logical(LogicalSize::new(
+                        (size.x * new_zoom) as f64,
+                        (size.y * new_zoom) as f64,
+                    )));
+                }
                 ViewportCommand::Focus => {
                     self.window.focus()?;
                 }
                 _ => {}
             }
-        }
-
-        if self.resize_mode == ResizeMode::ZoomViewport
-            && (new_zoom != prev_zoom || self.did_resize.replace(false))
-        {
-            match self.initial_size {
-                Size::Logical(initial_size) => {
-                    new_size = Some(Size::Logical(LogicalSize {
-                        width: initial_size.width * new_zoom as f64,
-                        height: initial_size.height * new_zoom as f64,
-                    }))
-                }
-                Size::Physical(initial_size) => {
-                    new_size = Some(Size::Physical(PhysicalSize::new(
-                        (initial_size.width as f32 * new_zoom).round() as u32,
-                        (initial_size.height as f32 * new_zoom).round() as u32,
-                    )))
-                }
-            };
-
-            self.inner.borrow_mut().egui_ctx.set_zoom_factor(new_zoom);
         }
 
         if let Some(new_size) = new_size {
@@ -576,42 +551,15 @@ impl<A: App> WindowHandler for EguiWindow<A> {
     }
 
     fn resized(&self, new_size: WindowSize) -> Result<(), HandlerError> {
-        let zoom_factor = match self.resize_mode {
-            ResizeMode::ExpandViewport => self.inner.borrow().egui_ctx.zoom_factor(),
-            ResizeMode::ZoomViewport => {
-                let new_aspect = new_size.logical.width / new_size.logical.height;
+        let zoom_factor = self.inner.borrow().egui_ctx.zoom_factor();
 
-                let zoom_factor = match self.initial_size {
-                    Size::Logical(initial_size) => {
-                        let initial_aspect = initial_size.width as f32 / initial_size.height as f32;
+        let total_scale_factor = new_size.scale_factor * zoom_factor as f64;
+        let logical_size: LogicalSize<f64> = new_size.physical.to_logical(total_scale_factor);
 
-                        if (new_aspect as f32) < initial_aspect {
-                            new_size.logical.width as f32 / initial_size.width as f32
-                        } else {
-                            new_size.logical.height as f32 / initial_size.height as f32
-                        }
-                    }
-                    Size::Physical(initial_size) => {
-                        let initial_aspect = initial_size.width as f32 / initial_size.height as f32;
-
-                        if (new_aspect as f32) < initial_aspect {
-                            new_size.physical.width as f32 / initial_size.width as f32
-                        } else {
-                            new_size.physical.height as f32 / initial_size.height as f32
-                        }
-                    }
-                };
-
-                self.inner
-                    .borrow_mut()
-                    .egui_ctx
-                    .set_zoom_factor(zoom_factor);
-
-                zoom_factor
-            }
-        };
-
-        let screen_rect = logical_screen_rect(new_size, zoom_factor);
+        let screen_rect = Rect::from_min_size(
+            Pos2::new(0f32, 0f32),
+            vec2(logical_size.width as f32, logical_size.height as f32),
+        );
 
         let mut egui_input = self.egui_input.borrow_mut();
 
@@ -623,7 +571,12 @@ impl<A: App> WindowHandler for EguiWindow<A> {
 
         self.repaint_after.set(Some(Instant::now()));
         self.scale_factor.set(new_size.scale_factor);
-        self.did_resize.set(true);
+
+        self.inner.borrow_mut().user_app.resized(WindowSize {
+            physical: new_size.physical,
+            logical: logical_size,
+            scale_factor: total_scale_factor,
+        });
 
         Ok(())
     }
@@ -892,15 +845,4 @@ fn is_paste_command(modifiers: egui::Modifiers, keycode: keyboard_types::Code) -
         || (cfg!(target_os = "windows")
             && modifiers.shift
             && keycode == keyboard_types::Code::Insert)
-}
-
-/// Calculate screen rectangle in logical size.
-fn logical_screen_rect(size: WindowSize, zoom_factor: f32) -> Rect {
-    Rect::from_min_size(
-        Pos2::new(0f32, 0f32),
-        vec2(
-            size.logical.width as f32 / zoom_factor,
-            size.logical.height as f32 / zoom_factor,
-        ),
-    )
 }
