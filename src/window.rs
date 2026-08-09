@@ -237,7 +237,8 @@ pub struct EguiWindow<A: App> {
     egui_input: RefCell<egui::RawInput>,
     viewport_id: egui::ViewportId,
     start_time: Instant,
-    scale_factor: Cell<f64>,
+    system_scale_factor: Cell<f64>,
+    zoom_factor: Cell<f32>,
     pointer_logical_pos: Cell<Option<egui::Pos2>>,
     current_cursor_icon: Cell<baseview::MouseCursor>,
     repaint_after: Cell<Option<Instant>>,
@@ -318,7 +319,8 @@ impl<A: App> EguiWindow<A> {
             egui_input: egui_input.into(),
             pointer_logical_pos: None.into(),
             current_cursor_icon: baseview::MouseCursor::Default.into(),
-            scale_factor: system_scale_factor.into(),
+            system_scale_factor: system_scale_factor.into(),
+            zoom_factor: zoom_factor.into(),
             repaint_after: Some(start_time).into(),
             window,
         })
@@ -386,16 +388,14 @@ impl<A: App> EguiWindow<A> {
 
 impl<A: App> WindowHandler for EguiWindow<A> {
     fn on_frame(&self) -> Result<(), HandlerError> {
-        let (egui_input, prev_zoom, logical_size) = {
+        let (egui_input, logical_size) = {
             let mut egui_input = self.egui_input.borrow_mut();
             egui_input.time = Some(self.start_time.elapsed().as_secs_f64());
 
-            let zoom_factor = self.inner.borrow().egui_ctx.zoom_factor();
+            let zoom_factor = self.zoom_factor.get();
 
             let size = self.window.size();
-            let logical_size: LogicalSize<f32> = self
-                .window
-                .size()
+            let logical_size: LogicalSize<f32> = size
                 .physical
                 .to_logical(size.scale_factor * zoom_factor as f64);
 
@@ -405,7 +405,7 @@ impl<A: App> WindowHandler for EguiWindow<A> {
             );
 
             egui_input.screen_rect = Some(screen_rect);
-            (egui_input.take(), zoom_factor, logical_size)
+            (egui_input.take(), logical_size)
         };
 
         let mut full_output = {
@@ -429,7 +429,9 @@ impl<A: App> WindowHandler for EguiWindow<A> {
         let mut new_size = None;
         let new_zoom = { self.inner.borrow().egui_ctx.zoom_factor() };
 
-        if new_zoom != prev_zoom {
+        if self.zoom_factor.get() != new_zoom {
+            self.zoom_factor.set(new_zoom);
+
             let mut inner = self.inner.borrow_mut();
 
             inner.egui_ctx.set_zoom_factor(new_zoom);
@@ -570,7 +572,7 @@ impl<A: App> WindowHandler for EguiWindow<A> {
         viewport_info.inner_rect = Some(screen_rect);
 
         self.repaint_after.set(Some(Instant::now()));
-        self.scale_factor.set(new_size.scale_factor);
+        self.system_scale_factor.set(new_size.scale_factor);
 
         self.inner.borrow_mut().user_app.resized(WindowSize {
             physical: new_size.physical,
@@ -605,7 +607,8 @@ impl<A: App> WindowHandler for EguiWindow<A> {
                     self.update_modifiers(modifiers);
 
                     let logical_pos: LogicalPosition<f32> = position.to_logical(
-                        self.scale_factor.get() * self.inner.borrow().egui_ctx.zoom_factor() as f64,
+                        self.system_scale_factor.get()
+                            * self.inner.borrow().egui_ctx.zoom_factor() as f64,
                     );
                     let pos = pos2(logical_pos.x, logical_pos.y);
 
@@ -785,6 +788,8 @@ impl<A: App> WindowHandler for EguiWindow<A> {
                         .get_mut(&self.viewport_id)
                         .unwrap()
                         .focused = Some(true);
+
+                    self.inner.borrow_mut().egui_ctx.request_repaint();
                 }
                 baseview::WindowEvent::Unfocused => {
                     let mut egui_input = self.egui_input.borrow_mut();
