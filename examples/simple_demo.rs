@@ -1,11 +1,17 @@
 use baseview::WindowSize;
 use egui::CentralPanel;
 use egui_baseview::{
-    EguiWindow, EguiWindowSettings, Frame,
+    EguiWindow, EguiWindowSettings, Frame, RepaintNotifier,
     baseview::{HandlerError, dpi::LogicalSize},
 };
 
 fn main() {
+    // A realtime-safe handle to request a repaint & update for an egui app.
+    //
+    // This can be used, for example, to notify the GUI that the value of a decibel
+    // meter has changed.
+    let repaint_notifier = RepaintNotifier::new();
+
     EguiWindow::create(
         EguiWindowSettings::new()
             .with_title("egui-baseview simple demo")
@@ -15,7 +21,8 @@ fn main() {
             })
             // A custom zoom factor can be set here. (The zoom factor can also be
             // changed later with `egui_ctx.set_zoom_factor()`.)
-            .with_zoom_factor(1.0),
+            .with_zoom_factor(1.0)
+            .with_repaint_notifier(repaint_notifier.clone()),
         MyApp::new(),
     )
     .unwrap()

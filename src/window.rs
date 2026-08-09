@@ -1,4 +1,6 @@
 use std::cell::{Cell, RefCell};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use baseview::dpi::{LogicalPosition, LogicalSize, Size};
@@ -18,6 +20,43 @@ use crate::{GraphicsConfig, renderer::Renderer};
 use log::{error, warn};
 #[cfg(feature = "tracing")]
 use tracing::{error, warn};
+
+/// A realtime-safe handle to request a update & repaint for an egui app.
+///
+/// This can be used, for example, to notify the GUI that the value of a decibel
+/// meter has changed.
+#[derive(Debug, Clone)]
+pub struct RepaintNotifier {
+    repaint: Arc<AtomicBool>,
+}
+
+impl RepaintNotifier {
+    pub fn new() -> Self {
+        Self {
+            repaint: Arc::new(AtomicBool::new(true)),
+        }
+    }
+
+    pub fn request_repaint(&self) {
+        self.repaint.store(true, Ordering::Relaxed);
+    }
+
+    pub fn request_repaint_with(&self, repaint: bool) {
+        if repaint {
+            self.repaint.store(true, Ordering::Relaxed);
+        }
+    }
+
+    fn repaint_requested(&self) -> bool {
+        self.repaint.swap(false, Ordering::Relaxed)
+    }
+}
+
+impl Default for RepaintNotifier {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// Settings used when creating a new window
 #[derive(Debug, Clone)]
@@ -66,6 +105,12 @@ pub struct EguiWindowSettings {
     ///
     /// On macOS, this function is always a no-op.
     pub fallback_scale_factor: Option<f64>,
+
+    /// A realtime-safe handle to request an update & repaint for an egui app.
+    ///
+    /// This can be used, for example, to notify the GUI that the value of a decibel
+    /// meter has changed.
+    pub repaint_notifier: Option<RepaintNotifier>,
 }
 
 impl EguiWindowSettings {
@@ -139,6 +184,16 @@ impl EguiWindowSettings {
         self.graphics = config;
         self
     }
+
+    /// A clone of the realtime-safe handle to request a update & repaint for an egui app.
+    ///
+    /// This can be used, for example, to notify the GUI that the value of a decibel
+    /// meter has changed.
+    #[inline]
+    pub fn with_repaint_notifier(mut self, repaint_notifier: RepaintNotifier) -> Self {
+        self.repaint_notifier = Some(repaint_notifier);
+        self
+    }
 }
 
 impl Default for EguiWindowSettings {
@@ -154,6 +209,7 @@ impl Default for EguiWindowSettings {
             parent: None,
             wait_for_parent: false,
             fallback_scale_factor: None,
+            repaint_notifier: None,
         }
     }
 }
@@ -241,7 +297,8 @@ pub struct EguiWindow<A: App> {
     zoom_factor: Cell<f32>,
     pointer_logical_pos: Cell<Option<egui::Pos2>>,
     current_cursor_icon: Cell<baseview::MouseCursor>,
-    repaint_after: Cell<Option<Instant>>,
+    repaint_after: Arc<Mutex<Option<Instant>>>,
+    repaint_notifier: Option<RepaintNotifier>,
 
     pub window: WindowContext,
 }
@@ -253,11 +310,29 @@ impl<A: App> EguiWindow<A> {
         graphics_config: GraphicsConfig,
         mut user_app: A,
         zoom_factor: f32,
+        repaint_notifier: Option<RepaintNotifier>,
     ) -> Result<EguiWindow<A>, HandlerError> {
         let renderer = Renderer::new(window.clone(), graphics_config)?;
         let egui_ctx = egui::Context::default();
 
         egui_ctx.set_zoom_factor(zoom_factor);
+
+        let repaint_after = Arc::new(Mutex::new(Some(Instant::now())));
+        let repaint_after_2 = Arc::clone(&repaint_after);
+        egui_ctx.set_request_repaint_callback(move |request_repaint_info| {
+            let repaint_instant = Instant::now() + request_repaint_info.delay;
+
+            let mut repaint_after = repaint_after_2.lock().unwrap();
+            let repaint_after = &mut *repaint_after;
+
+            if let Some(repaint_after) = repaint_after.as_mut() {
+                if repaint_instant < *repaint_after {
+                    *repaint_after = repaint_instant;
+                }
+            } else {
+                *repaint_after = Some(repaint_instant);
+            }
+        });
 
         let size = window.size();
 
@@ -321,8 +396,9 @@ impl<A: App> EguiWindow<A> {
             current_cursor_icon: baseview::MouseCursor::Default.into(),
             system_scale_factor: system_scale_factor.into(),
             zoom_factor: zoom_factor.into(),
-            repaint_after: Some(start_time).into(),
+            repaint_after,
             window,
+            repaint_notifier,
         })
     }
 
@@ -338,6 +414,7 @@ impl<A: App> EguiWindow<A> {
     ///
     /// * `settings` - The settings of the window.
     /// * `app` - The application to run.
+    /// * `host` - The baseview ['Host'](baseview::host::Host) callbacks.
     pub fn create_with_host(
         settings: EguiWindowSettings,
         app: A,
@@ -371,6 +448,7 @@ impl<A: App> EguiWindow<A> {
                     settings.graphics,
                     app,
                     settings.zoom_factor,
+                    settings.repaint_notifier,
                 )
             },
             host,
@@ -388,6 +466,28 @@ impl<A: App> EguiWindow<A> {
 
 impl<A: App> WindowHandler for EguiWindow<A> {
     fn on_frame(&self) -> Result<(), HandlerError> {
+        let mut do_repaint_now = if let Some(repaint_notifier) = &self.repaint_notifier {
+            repaint_notifier.repaint_requested()
+        } else {
+            false
+        };
+
+        {
+            let mut repaint_after = self.repaint_after.lock().unwrap();
+            let repaint_after = &mut *repaint_after;
+
+            if let Some(instant) = &repaint_after
+                && Instant::now() >= *instant
+            {
+                do_repaint_now = true;
+                *repaint_after = None;
+            }
+        }
+
+        if !do_repaint_now {
+            return Ok(());
+        }
+
         let (egui_input, logical_size) = {
             let mut egui_input = self.egui_input.borrow_mut();
             egui_input.time = Some(self.start_time.elapsed().as_secs_f64());
@@ -476,29 +576,15 @@ impl<A: App> WindowHandler for EguiWindow<A> {
                 frame,
             } = &mut *inner;
 
-            let now = Instant::now();
-            let do_repaint_now = if let Some(t) = self.repaint_after.get() {
-                now >= t || viewport_output.repaint_delay.is_zero()
-            } else {
-                viewport_output.repaint_delay.is_zero()
-            };
-
-            if do_repaint_now {
-                let size = self.window.size();
-                frame.renderer.render(
-                    &self.window,
-                    frame.clear_color,
-                    size.physical,
-                    size.scale_factor as f32 * egui_ctx.zoom_factor(),
-                    egui_ctx,
-                    &mut full_output,
-                );
-
-                self.repaint_after.set(None);
-            } else if let Some(t) = now.checked_add(viewport_output.repaint_delay) {
-                // Schedule to repaint after the requested time has elapsed.
-                self.repaint_after.set(Some(t));
-            }
+            let size = self.window.size();
+            frame.renderer.render(
+                &self.window,
+                frame.clear_color,
+                size.physical,
+                size.scale_factor as f32 * egui_ctx.zoom_factor(),
+                egui_ctx,
+                &mut full_output,
+            );
 
             for command in full_output.platform_output.commands {
                 match command {
@@ -571,10 +657,13 @@ impl<A: App> WindowHandler for EguiWindow<A> {
         viewport_info.native_pixels_per_point = Some(new_size.scale_factor as f32);
         viewport_info.inner_rect = Some(screen_rect);
 
-        self.repaint_after.set(Some(Instant::now()));
         self.system_scale_factor.set(new_size.scale_factor);
 
-        self.inner.borrow_mut().user_app.resized(WindowSize {
+        let mut inner = self.inner.borrow_mut();
+
+        inner.egui_ctx.request_repaint();
+
+        inner.user_app.resized(WindowSize {
             physical: new_size.physical,
             logical: logical_size,
             scale_factor: total_scale_factor,
@@ -597,6 +686,8 @@ impl<A: App> WindowHandler for EguiWindow<A> {
         {
             self.window.focus().unwrap();
         }
+
+        let mut do_repaint = true;
 
         match &event {
             baseview::Event::Mouse(event) => match event {
@@ -692,7 +783,7 @@ impl<A: App> WindowHandler for EguiWindow<A> {
                         .events
                         .push(egui::Event::PointerGone);
                 }
-                _ => {}
+                _ => do_repaint = false,
             },
             baseview::Event::Keyboard(event) => {
                 use keyboard_types::Code;
@@ -789,7 +880,7 @@ impl<A: App> WindowHandler for EguiWindow<A> {
                         .unwrap()
                         .focused = Some(true);
 
-                    self.inner.borrow_mut().egui_ctx.request_repaint();
+                    self.inner.borrow().egui_ctx.request_repaint();
                 }
                 baseview::WindowEvent::Unfocused => {
                     let mut egui_input = self.egui_input.borrow_mut();
@@ -803,7 +894,11 @@ impl<A: App> WindowHandler for EguiWindow<A> {
                 baseview::WindowEvent::WillClose => {}
                 _ => {}
             },
-            _ => {}
+            _ => do_repaint = false,
+        }
+
+        if do_repaint {
+            self.inner.borrow().egui_ctx.request_repaint();
         }
 
         // For keyboard events, also check if egui actually wants keyboard input
