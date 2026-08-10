@@ -9,7 +9,7 @@ use baseview::{
     WindowSettings, WindowSize,
 };
 use copypasta::ClipboardProvider;
-use egui::{Pos2, Rect, Rgba, ViewportCommand, pos2, vec2};
+use egui::{FullOutput, Pos2, Rect, Rgba, ViewportCommand, pos2, vec2};
 use keyboard_types::Modifiers;
 use raw_window_handle::HasWindowHandle;
 
@@ -299,6 +299,10 @@ pub struct EguiWindow<A: App> {
     current_cursor_icon: Cell<baseview::MouseCursor>,
     repaint_after: Arc<Mutex<Option<Instant>>>,
     repaint_notifier: Option<RepaintNotifier>,
+    modifiers: Cell<egui::Modifiers>,
+
+    // Re-use the allocations from the previous output.
+    full_output: RefCell<FullOutput>,
 
     pub window: WindowContext,
 }
@@ -399,6 +403,8 @@ impl<A: App> EguiWindow<A> {
             repaint_after,
             window,
             repaint_notifier,
+            modifiers: Cell::new(egui::Modifiers::default()),
+            full_output: RefCell::new(FullOutput::default()),
         })
     }
 
@@ -454,13 +460,34 @@ impl<A: App> EguiWindow<A> {
             host,
         )
     }
+}
 
-    /// Update the pressed key modifiers when a mouse event has sent a new set of modifiers.
-    fn update_modifiers(&self, modifiers: &Modifiers) {
-        let mut egui_input = self.egui_input.borrow_mut();
-        egui_input.modifiers.alt = !(*modifiers & Modifiers::ALT).is_empty();
-        egui_input.modifiers.shift = !(*modifiers & Modifiers::SHIFT).is_empty();
-        egui_input.modifiers.command = !(*modifiers & Modifiers::CONTROL).is_empty();
+/// Update the pressed key modifiers when a mouse event has sent a new set of modifiers.
+fn update_modifiers(
+    old_modifiers: &Cell<egui::Modifiers>,
+    new_modifiers: &Modifiers,
+    egui_input: &mut egui::RawInput,
+) {
+    let (new_mac_cmd, new_command) = if cfg!(target_os = "macos") {
+        let m = new_modifiers.meta();
+        (m, m)
+    } else {
+        (false, new_modifiers.ctrl())
+    };
+
+    let new_modifiers = egui::Modifiers {
+        alt: new_modifiers.alt(),
+        ctrl: new_modifiers.ctrl(),
+        shift: new_modifiers.shift(),
+        mac_cmd: new_mac_cmd,
+        command: new_command,
+    };
+
+    if old_modifiers.get() != new_modifiers {
+        old_modifiers.set(new_modifiers);
+        egui_input
+            .events
+            .push(egui::Event::ModifiersChanged(new_modifiers));
     }
 }
 
@@ -508,7 +535,10 @@ impl<A: App> WindowHandler for EguiWindow<A> {
             (egui_input.take(), logical_size)
         };
 
-        let mut full_output = {
+        // Re-use the allocations from the previous output.
+        let mut full_output = self.full_output.borrow_mut();
+
+        *full_output = {
             let mut inner = self.inner.borrow_mut();
             let EguiWindowInner {
                 user_app,
@@ -586,7 +616,7 @@ impl<A: App> WindowHandler for EguiWindow<A> {
                 &mut full_output,
             );
 
-            for command in full_output.platform_output.commands {
+            for command in full_output.platform_output.commands.drain(..) {
                 match command {
                     egui::OutputCommand::CopyText(text) => {
                         if let Some(clipboard_ctx) = clipboard_ctx.as_mut()
@@ -687,6 +717,8 @@ impl<A: App> WindowHandler for EguiWindow<A> {
             self.window.focus().unwrap();
         }
 
+        let mut egui_input = self.egui_input.borrow_mut();
+
         let mut do_repaint = true;
 
         match &event {
@@ -695,7 +727,7 @@ impl<A: App> WindowHandler for EguiWindow<A> {
                     position,
                     modifiers,
                 } => {
-                    self.update_modifiers(modifiers);
+                    update_modifiers(&self.modifiers, modifiers, &mut egui_input);
 
                     let logical_pos: LogicalPosition<f32> = position.to_logical(
                         self.system_scale_factor.get()
@@ -704,40 +736,33 @@ impl<A: App> WindowHandler for EguiWindow<A> {
                     let pos = pos2(logical_pos.x, logical_pos.y);
 
                     self.pointer_logical_pos.set(Some(pos));
-                    self.egui_input
-                        .borrow_mut()
-                        .events
-                        .push(egui::Event::PointerMoved(pos));
+                    egui_input.events.push(egui::Event::PointerMoved(pos));
                 }
                 baseview::MouseEvent::ButtonPressed { button, modifiers } => {
-                    self.update_modifiers(modifiers);
+                    update_modifiers(&self.modifiers, modifiers, &mut egui_input);
 
                     if let Some(pos) = self.pointer_logical_pos.get()
                         && let Some(button) = crate::translate::translate_mouse_button(*button)
                     {
-                        let mut egui_input = self.egui_input.borrow_mut();
-                        let modifiers = egui_input.modifiers;
                         egui_input.events.push(egui::Event::PointerButton {
                             pos,
                             button,
                             pressed: true,
-                            modifiers,
+                            modifiers: self.modifiers.get(),
                         });
                     }
                 }
                 baseview::MouseEvent::ButtonReleased { button, modifiers } => {
-                    self.update_modifiers(modifiers);
+                    update_modifiers(&self.modifiers, modifiers, &mut egui_input);
 
                     if let Some(pos) = self.pointer_logical_pos.get()
                         && let Some(button) = crate::translate::translate_mouse_button(*button)
                     {
-                        let mut egui_input = self.egui_input.borrow_mut();
-                        let modifiers = egui_input.modifiers;
                         egui_input.events.push(egui::Event::PointerButton {
                             pos,
                             button,
                             pressed: false,
-                            modifiers,
+                            modifiers: self.modifiers.get(),
                         });
                     }
                 }
@@ -745,7 +770,7 @@ impl<A: App> WindowHandler for EguiWindow<A> {
                     delta: scroll_delta,
                     modifiers,
                 } => {
-                    self.update_modifiers(modifiers);
+                    update_modifiers(&self.modifiers, modifiers, &mut egui_input);
 
                     #[allow(unused_mut)]
                     let (unit, mut delta) = match scroll_delta {
@@ -767,54 +792,27 @@ impl<A: App> WindowHandler for EguiWindow<A> {
                         delta.x *= -1.0;
                     }
 
-                    let mut egui_input = self.egui_input.borrow_mut();
-                    let modifiers = egui_input.modifiers;
                     egui_input.events.push(egui::Event::MouseWheel {
                         unit,
                         delta,
-                        modifiers,
+                        modifiers: self.modifiers.get(),
                         phase: egui::TouchPhase::Move,
                     });
                 }
                 baseview::MouseEvent::CursorLeft => {
                     self.pointer_logical_pos.set(None);
-                    self.egui_input
-                        .borrow_mut()
-                        .events
-                        .push(egui::Event::PointerGone);
+                    egui_input.events.push(egui::Event::PointerGone);
                 }
                 _ => do_repaint = false,
             },
             baseview::Event::Keyboard(event) => {
-                use keyboard_types::Code;
+                update_modifiers(&self.modifiers, &event.modifiers, &mut egui_input);
 
                 let pressed = event.state == keyboard_types::KeyState::Down;
-                let mut egui_input = self.egui_input.borrow_mut();
 
-                match event.code {
-                    Code::ShiftLeft | Code::ShiftRight => egui_input.modifiers.shift = pressed,
-                    Code::ControlLeft | Code::ControlRight => {
-                        egui_input.modifiers.ctrl = pressed;
-
-                        #[cfg(not(target_os = "macos"))]
-                        {
-                            egui_input.modifiers.command = pressed;
-                        }
-                    }
-                    Code::AltLeft | Code::AltRight => egui_input.modifiers.alt = pressed,
-                    Code::MetaLeft | Code::MetaRight => {
-                        #[cfg(target_os = "macos")]
-                        {
-                            egui_input.modifiers.mac_cmd = pressed;
-                            egui_input.modifiers.command = pressed;
-                        }
-                        // prevent `rustfmt` from breaking this
-                    }
-                    _ => (),
-                }
+                let modifiers = self.modifiers.get();
 
                 if let Some(key) = crate::translate::translate_virtual_key(&event.key) {
-                    let modifiers = egui_input.modifiers;
                     egui_input.events.push(egui::Event::Key {
                         key,
                         physical_key: None,
@@ -829,11 +827,11 @@ impl<A: App> WindowHandler for EguiWindow<A> {
                     // so we detect these things manually:
                     //
                     // TODO: See if this is an issue in baseview as well.
-                    if is_cut_command(egui_input.modifiers, event.code) {
+                    if is_cut_command(modifiers, event.code) {
                         egui_input.events.push(egui::Event::Cut);
-                    } else if is_copy_command(egui_input.modifiers, event.code) {
+                    } else if is_copy_command(modifiers, event.code) {
                         egui_input.events.push(egui::Event::Copy);
-                    } else if is_paste_command(egui_input.modifiers, event.code) {
+                    } else if is_paste_command(modifiers, event.code) {
                         if let Some(clipboard_ctx) = self.inner.borrow_mut().clipboard_ctx.as_mut()
                         {
                             match clipboard_ctx.get_contents() {
@@ -848,8 +846,8 @@ impl<A: App> WindowHandler for EguiWindow<A> {
                             }
                         }
                     } else if let keyboard_types::Key::Character(written) = &event.key
-                        && !egui_input.modifiers.ctrl
-                        && !egui_input.modifiers.command
+                        && !modifiers.ctrl
+                        && !modifiers.command
                     {
                         egui_input.events.push(egui::Event::Text(written.clone()));
                     }
@@ -872,7 +870,6 @@ impl<A: App> WindowHandler for EguiWindow<A> {
             }
             baseview::Event::Window(event) => match event {
                 baseview::WindowEvent::Focused => {
-                    let mut egui_input = self.egui_input.borrow_mut();
                     egui_input.events.push(egui::Event::WindowFocused(true));
                     egui_input
                         .viewports
@@ -883,7 +880,6 @@ impl<A: App> WindowHandler for EguiWindow<A> {
                     self.inner.borrow().egui_ctx.request_repaint();
                 }
                 baseview::WindowEvent::Unfocused => {
-                    let mut egui_input = self.egui_input.borrow_mut();
                     egui_input.events.push(egui::Event::WindowFocused(false));
                     egui_input
                         .viewports

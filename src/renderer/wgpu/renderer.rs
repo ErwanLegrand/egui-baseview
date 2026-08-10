@@ -176,13 +176,15 @@ impl Renderer {
 
         let user_cmd_bufs = {
             let mut renderer = self.render_state.renderer.write();
-            for (id, image_delta) in &full_output.textures_delta.set {
-                renderer.update_texture(
-                    &self.render_state.device,
-                    &self.render_state.queue,
-                    *id,
-                    image_delta,
-                );
+            for (id, image_deltas) in full_output.textures_delta.set.drain() {
+                for image_delta in image_deltas {
+                    renderer.update_texture(
+                        &self.render_state.device,
+                        &self.render_state.queue,
+                        id,
+                        &image_delta,
+                    );
+                }
             }
 
             renderer.update_buffers(
@@ -286,6 +288,6 @@ impl Renderer {
             .queue
             .submit(user_cmd_bufs.into_iter().chain([encoded]));
 
-        output_frame.present();
+        self.render_state.queue.present(output_frame);
     }
 }
