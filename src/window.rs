@@ -67,6 +67,14 @@ pub struct EguiWindowSettings {
     /// The size of the window, either in physical or logical coordinates.
     pub size: Size,
 
+    /// The minimum window size. Set to `None` for no minimum size.
+    pub min_size: Option<Size>,
+    /// The maximum window size. Set to `None` for no maximum size.
+    pub max_size: Option<Size>,
+
+    /// Whether the window can be resized.
+    pub resizable: bool,
+
     /// The amount of zoom (scaling) to apply. This is applied on top of the
     /// system's native scaling factor.
     ///
@@ -130,6 +138,33 @@ impl EguiWindowSettings {
     #[inline]
     pub fn with_size(mut self, size: impl Into<Size>) -> Self {
         self.size = size.into();
+        self
+    }
+
+    /// Sets whether the window can be resized.
+    ///
+    /// Defaults to `true`.
+    #[inline]
+    pub fn with_resizable(mut self, resizable: bool) -> Self {
+        self.resizable = resizable;
+        self
+    }
+
+    /// The minimum window size. Set to `None` for no minimum size.
+    ///
+    /// Defaults to `None`.
+    #[inline]
+    pub fn with_min_size<S: Into<Size>>(mut self, min_size: Option<S>) -> Self {
+        self.min_size = min_size.map(|s| s.into());
+        self
+    }
+
+    /// The maximum window size. Set to `None` for no maximum size.
+    ///
+    /// Defaults to `None`.
+    #[inline]
+    pub fn with_max_size<S: Into<Size>>(mut self, max_size: Option<S>) -> Self {
+        self.max_size = max_size.map(|s| s.into());
         self
     }
 
@@ -204,6 +239,9 @@ impl Default for EguiWindowSettings {
                 width: 300.0,
                 height: 200.0,
             }),
+            min_size: None,
+            max_size: None,
+            resizable: true,
             zoom_factor: 1.0,
             graphics: GraphicsConfig::default(),
             parent: None,
@@ -437,6 +475,9 @@ impl<A: App> EguiWindow<A> {
         let mut options = WindowSettings::new()
             .with_title(settings.title.clone())
             .with_size(size)
+            .with_min_size::<Size>(settings.min_size)
+            .with_max_size::<Size>(settings.max_size)
+            .with_resizable(settings.resizable)
             .with_wait_for_parent(settings.wait_for_parent)
             .with_fallback_scale_factor(settings.fallback_scale_factor);
 

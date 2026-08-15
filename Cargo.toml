@@ -23,8 +23,7 @@ tracing = ["dep:tracing", "baseview/tracing"]
 log = ["dep:log"]
 
 [dependencies]
-#baseview = "0.3"
-baseview = { git = "https://github.com/RustAudio/baseview.git", rev = "e85e49515126f990904522604b656722dbc65a39" }
+baseview = "0.3.1"
 raw-window-handle = "0.6"
 egui = { version = "0.36.1", default-features = false, features = ["bytemuck"] }
 egui_glow = { version = "0.36.1", features = ["x11"], optional = true }

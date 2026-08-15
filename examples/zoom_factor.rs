@@ -2,12 +2,15 @@ use egui::CentralPanel;
 use egui_baseview::{EguiWindow, EguiWindowSettings, baseview::dpi::LogicalSize};
 
 const WINDOW_SIZE: LogicalSize<f32> = LogicalSize::new(300.0, 250.0);
+const MIN_WINDOW_SIZE: LogicalSize<f32> = LogicalSize::new(200.0, 150.0);
 
 fn main() {
     EguiWindow::create(
         EguiWindowSettings::new()
             .with_title("egui-baseview zoom factor")
-            .with_size(WINDOW_SIZE),
+            .with_size(WINDOW_SIZE)
+            .with_min_size::<LogicalSize<f32>>(Some(MIN_WINDOW_SIZE))
+            .with_resizable(true),
         MyApp { zoom_factor: 1.0 },
     )
     .unwrap()
