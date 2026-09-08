@@ -946,8 +946,9 @@ impl<A: App> WindowHandler for EguiWindow<A> {
             #[cfg(feature = "accessibility")]
             baseview::Event::Accessibility(event) => match event {
                 baseview::AccessibilityEvent::Enabled => {
-                    // Force an immediate frame to produce and deliver the initial accessibility tree.
-                    self.inner.borrow().egui_ctx.request_repaint();
+                    let egui_ctx = &self.inner.borrow().egui_ctx;
+                    egui_ctx.enable_accesskit();
+                    egui_ctx.request_repaint();
                 }
                 baseview::AccessibilityEvent::ActionRequested(action_request) => {
                     egui_input
