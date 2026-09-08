@@ -11,7 +11,8 @@ categories = ["gui"]
 readme = "README.md"
 
 [features]
-default = ["opengl", "tracing"]
+default = ["opengl", "tracing", "accessibility"]
+accessibility = ["baseview/accessibility"]
 opengl = ["dep:egui_glow", "baseview/opengl"]
 wgpu = ["dep:egui-wgpu", "dep:pollster", "dep:wgpu"]
 ## Enables a temporary workaround for keyboard input not working sometimes.
@@ -23,7 +24,7 @@ tracing = ["dep:tracing", "baseview/tracing"]
 log = ["dep:log"]
 
 [dependencies]
-baseview = "0.3.1"
+baseview = { git = "https://github.com/ErwanLegrand/baseview.git", branch = "accesskit-design" }
 raw-window-handle = "0.6"
 egui = { version = "0.36.1", default-features = false, features = ["bytemuck"] }
 egui_glow = { version = "0.36.1", features = ["x11"], optional = true }
