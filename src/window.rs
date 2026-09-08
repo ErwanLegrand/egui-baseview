@@ -693,6 +693,11 @@ impl<A: App> WindowHandler for EguiWindow<A> {
             }
         }
 
+        #[cfg(feature = "accessibility")]
+        if let Some(update) = full_output.platform_output.accesskit_update.take() {
+            self.window.update_accessibility_tree(update);
+        }
+
         let cursor_icon =
             crate::translate::translate_cursor_icon(full_output.platform_output.cursor_icon);
         if self.current_cursor_icon.get() != cursor_icon {
@@ -937,6 +942,20 @@ impl<A: App> WindowHandler for EguiWindow<A> {
                 baseview::WindowEvent::WillClose => {}
                 _ => {}
             },
+            #[cfg(feature = "accessibility")]
+            baseview::Event::Accessibility(event) => match event {
+                baseview::AccessibilityEvent::Enabled => {
+                    // Force an immediate frame to produce and deliver the initial accessibility tree.
+                    self.inner.borrow().egui_ctx.request_repaint();
+                }
+                baseview::AccessibilityEvent::ActionRequested(action_request) => {
+                    egui_input
+                        .events
+                        .push(egui::Event::AccessKitActionRequest(action_request.clone()));
+                    self.inner.borrow().egui_ctx.request_repaint();
+                }
+                _ => {}
+            },
             _ => do_repaint = false,
         }
 
@@ -964,6 +983,8 @@ impl<A: App> WindowHandler for EguiWindow<A> {
                 }
             }
             baseview::Event::Window(_) => EventStatus::Captured,
+            #[cfg(feature = "accessibility")]
+            baseview::Event::Accessibility(_) => EventStatus::Captured,
             _ => EventStatus::Ignored,
         }
     }
