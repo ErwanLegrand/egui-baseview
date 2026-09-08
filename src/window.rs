@@ -466,8 +466,8 @@ impl<A: App> EguiWindow<A> {
     ) -> Result<Window, baseview::Error> {
         let size = match settings.size {
             Size::Logical(size) => Size::Logical(LogicalSize {
-                width: size.width as f64 * settings.zoom_factor as f64,
-                height: size.height as f64 * settings.zoom_factor as f64,
+                width: size.width * settings.zoom_factor as f64,
+                height: size.height * settings.zoom_factor as f64,
             }),
             Size::Physical(size) => Size::Physical(size),
         };
@@ -635,6 +635,7 @@ impl<A: App> WindowHandler for EguiWindow<A> {
         }
 
         if let Some(new_size) = new_size {
+            #[allow(clippy::collapsible_if)]
             if let Err(e) = self.window.resize(new_size) {
                 #[cfg(any(feature = "tracing", feature = "log"))]
                 error!("Failed to resize window: {}", e);
