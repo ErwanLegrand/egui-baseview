@@ -298,7 +298,7 @@ impl Frame {
     /// Note that all egui painting is deferred to after the call to App::ui
     /// (egui only collects egui::Shapes and then egui-baseview paints them all in
     /// one go later on).
-    #[cfg(feature = "opengl")]
+    #[cfg(all(feature = "opengl", not(feature = "wgpu")))]
     pub fn gl(&self) -> &std::sync::Arc<egui_glow::glow::Context> {
         &self.renderer.glow_context
     }
@@ -483,8 +483,10 @@ impl<A: App> EguiWindow<A> {
 
         options.parent = settings.parent;
 
-        #[cfg(feature = "opengl")]
-        let options = { options.with_gl_config(Some(settings.graphics.gl_config.clone())) };
+        #[cfg(all(feature = "opengl", not(feature = "wgpu")))]
+        let options = options.with_gl_config(Some(settings.graphics.gl_config.clone()));
+        #[cfg(not(all(feature = "opengl", not(feature = "wgpu"))))]
+        let options = options;
 
         Window::create_with_host(
             options,
@@ -634,7 +636,11 @@ impl<A: App> WindowHandler for EguiWindow<A> {
 
         if let Some(new_size) = new_size {
             if let Err(e) = self.window.resize(new_size) {
+                #[cfg(any(feature = "tracing", feature = "log"))]
                 error!("Failed to resize window: {}", e);
+
+                #[cfg(not(any(feature = "tracing", feature = "log")))]
+                let _ = e;
             }
         }
 
@@ -702,7 +708,7 @@ impl<A: App> WindowHandler for EguiWindow<A> {
             if !full_output.platform_output.events.is_empty()
                 || full_output.platform_output.ime.is_some()
             {
-                window.focus();
+                let _ = self.window.focus();
             }
         }
 
