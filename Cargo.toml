@@ -24,7 +24,7 @@ tracing = ["dep:tracing", "baseview/tracing"]
 log = ["dep:log"]
 
 [dependencies]
-baseview = { git = "https://github.com/ErwanLegrand/baseview.git", branch = "accesskit-design" }
+baseview = { git = "https://github.com/ErwanLegrand/baseview.git", rev = "c0870cb5b5279e4fff174ea8b407f19671e4fd5e" }
 raw-window-handle = "0.6"
 egui = { version = "0.36.1", default-features = false, features = ["bytemuck"] }
 egui_glow = { version = "0.36.1", features = ["x11"], optional = true }
